@@ -1,11 +1,16 @@
 /**
- * One open document: toolbar, page panel and viewer with its own zoom, page, search
- * and selection. Every tab keeps its DocView mounted, so switching tabs keeps the
- * scroll position; inactive tabs are hidden and release their rendered pages.
+ * One open document: toolbar, page panel and viewer with its own zoom, page, search,
+ * selection and annotation tools. Every tab keeps its DocView mounted, so switching
+ * tabs keeps the scroll position; inactive tabs are hidden and release their rendered pages.
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PdfEngine } from "./engine/engine";
-import type { SearchHit, TextSelection } from "./engine/types";
+import type { AnnotEdit, EditState, Rect, SearchHit, TextSelection } from "./engine/types";
+import { AnnotateBar } from "./annotate/AnnotateBar";
+import { EditContext, type AnnotRef, type Draft, type EditApi } from "./annotate/context";
+import { SignatureDialog } from "./annotate/SignatureDialog";
+import { signatureBytes, type Signature } from "./annotate/signatures";
+import { colorOf, fitInto, loadSettings, MARKUP, saveSettings, type Tool, type ToolSettings } from "./annotate/tools";
 import { Toolbar } from "./components/Toolbar";
 import { Sidebar } from "./components/Sidebar";
 import { ExportDialog } from "./export/ExportDialog";
@@ -15,6 +20,7 @@ import { clampScale, CSS_PX_PER_PT_AT_100, fitScale, nextZoomStep, percentToScal
 import { copyToClipboard } from "./clipboard";
 import { errorText } from "./errors";
 import { useT } from "./i18n";
+import { lastPage, rememberPage } from "./recent";
 import type { OpenDoc } from "./tabs";
 
 type FitMode = "width" | "page" | null;
@@ -38,9 +44,14 @@ interface Props {
   onOpen(): void;
   onSave(asNew: boolean): void;
   onOrganize(): void;
+  /** The document content was changed (annotations, form fields). */
+  onEdited(): void;
   onToast(message: string): void;
   onError(message: string): void;
 }
+
+/** Opening links from documents: only web pages and e-mail. */
+const SAFE_URI = /^(https?:|mailto:)/i;
 
 export function DocView(props: Props) {
   const { engine, doc, active, onToggleSidebar, onToast, onError } = props;
@@ -58,6 +69,221 @@ export function DocView(props: Props) {
   const [dialog, setDialog] = useState<"export" | "print" | null>(null);
   const currentPageRef = useRef(currentPage);
   currentPageRef.current = currentPage;
+  const selectionRef = useRef(selection);
+  const handleSelection = useCallback((sel: TextSelection | null) => {
+    selectionRef.current = sel;
+    setSelection(sel);
+  }, []);
+
+  // ---------- Annotations and forms ----------
+
+  const canEdit = info.isPdf;
+  const [annotating, setAnnotating] = useState(false);
+  const [tool, setTool] = useState<Tool>("select");
+  const [settings, setSettingsState] = useState<ToolSettings>(loadSettings);
+  const [signature, setSignature] = useState<Signature | null>(null);
+  const [selected, setSelected] = useState<AnnotRef | null>(null);
+  const [draft, setDraftState] = useState<Draft | null>(null);
+  const [history, setHistory] = useState<EditState>({ canUndo: false, canRedo: false });
+  const [revs, setRevs] = useState<{ all: number; pages: Record<number, number> }>({ all: 0, pages: {} });
+  /** Signature dialog; `field` = a signature form field to fill */
+  const [sigDialog, setSigDialog] = useState<{ field?: { page: number; rect: Rect } } | null>(null);
+  const activeTool: Tool = annotating ? tool : "select";
+  const toolRef = useRef(activeTool);
+  toolRef.current = activeTool;
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
+  const { onEdited } = props;
+
+  const bumpPage = useCallback(
+    (page: number) => setRevs((r) => ({ all: r.all, pages: { ...r.pages, [page]: (r.pages[page] ?? 0) + 1 } })),
+    [],
+  );
+  const bumpAll = useCallback(() => setRevs((r) => ({ all: r.all + 1, pages: r.pages })), []);
+
+  const edit = useCallback(
+    async (page: number, change: AnnotEdit): Promise<EditState | null> => {
+      try {
+        const state = await engine.editAnnot(info.docId, page, change);
+        setHistory(state);
+        bumpPage(page);
+        onEdited();
+        return state;
+      } catch (e) {
+        onError(t.annotate.editFailed(errorText(e)));
+        bumpAll();
+        return null;
+      }
+    },
+    [engine, info.docId, bumpPage, bumpAll, onEdited, onError, t],
+  );
+  const editRef = useRef(edit);
+  editRef.current = edit;
+
+  const setField = useCallback(
+    async (page: number, id: number, change: { value?: string; toggle?: boolean }) => {
+      try {
+        setHistory(await engine.setField(info.docId, page, id, change));
+        // A field can be shown on several pages (same name), so redraw everything.
+        bumpAll();
+        onEdited();
+      } catch (e) {
+        onError(t.annotate.editFailed(errorText(e)));
+      }
+    },
+    [engine, info.docId, bumpAll, onEdited, onError, t],
+  );
+
+  const undoRedo = useCallback(
+    async (redo: boolean) => {
+      if (!canEdit) return;
+      try {
+        const state = redo ? await engine.redo(info.docId) : await engine.undo(info.docId);
+        setHistory(state);
+        setSelected(null);
+        setDraftState(null);
+        bumpAll();
+        onEdited();
+      } catch (e) {
+        onError(t.annotate.editFailed(errorText(e)));
+      }
+    },
+    [canEdit, engine, info.docId, bumpAll, onEdited, onError, t],
+  );
+
+  // After saving, the engine starts a new edit history (and may renumber objects).
+  const wasDirty = useRef(doc.dirty);
+  useEffect(() => {
+    if (wasDirty.current && !doc.dirty) {
+      setSelected(null);
+      bumpAll();
+      engine.history(info.docId).then(setHistory, () => {});
+    }
+    wasDirty.current = doc.dirty;
+  }, [doc.dirty, engine, info.docId, bumpAll]);
+
+  const setSettings = useCallback((next: ToolSettings) => {
+    setSettingsState(next);
+    saveSettings(next);
+  }, []);
+
+  const chooseTool = useCallback(
+    (next: Tool) => {
+      setAnnotating(true);
+      setSelected(null);
+      if (next === "signature") {
+        setSigDialog({});
+        return;
+      }
+      // Highlighting text that is already selected.
+      const markup = MARKUP[next];
+      const sel = selectionRef.current;
+      if (markup && sel?.quads.length && toolRef.current === "select") {
+        void edit(sel.page, { op: "create", annot: { type: markup, quads: sel.quads, color: colorOf(settings.colors[next]) } });
+        handleSelection(null);
+        return;
+      }
+      setSignature(null);
+      setTool(next);
+    },
+    [edit, settings, handleSelection],
+  );
+
+  const closeAnnotate = useCallback(() => {
+    setAnnotating(false);
+    setTool("select");
+    setSignature(null);
+    setSelected(null);
+  }, []);
+
+  const placeSignatureImage = useCallback(
+    async (sig: Signature, page: number, rect: Rect) => {
+      const state = await edit(page, { op: "create", annot: { type: "Stamp", rect, image: signatureBytes(sig) } });
+      if (state?.id !== undefined) setSelected({ page, id: state.id });
+    },
+    [edit],
+  );
+
+  const onSignatureChosen = useCallback(
+    (sig: Signature) => {
+      const field = sigDialog?.field;
+      setSigDialog(null);
+      if (field) {
+        void placeSignatureImage(sig, field.page, fitInto(field.rect, sig.width / sig.height));
+        return;
+      }
+      setAnnotating(true);
+      setSignature(sig);
+      setTool("signature");
+    },
+    [sigDialog, placeSignatureImage],
+  );
+
+  // Text selected with a markup tool gets highlighted / underlined / struck out.
+  const onSelectionEnd = useCallback(() => {
+    const markup = MARKUP[toolRef.current];
+    const sel = selectionRef.current;
+    if (!markup || !sel?.quads.length) return;
+    void editRef.current(sel.page, {
+      op: "create",
+      annot: { type: markup, quads: sel.quads, color: colorOf(settingsRef.current.colors[toolRef.current]) },
+    });
+    handleSelection(null);
+  }, [handleSelection]);
+
+  const onPagePress = useCallback(() => setSelected(null), []);
+
+  const editApi = useMemo<EditApi>(
+    () => ({
+      engine,
+      docId: info.docId,
+      canEdit,
+      tool: activeTool,
+      settings,
+      signature,
+      selected,
+      draft,
+      pageRev: (page) => revs.all + (revs.pages[page] ?? 0),
+      select: setSelected,
+      setDraft: (d) => {
+        setDraftState(d);
+        if (d) setSelected(null);
+        // Notes and text boxes are placed one at a time.
+        if (d && (toolRef.current === "note" || toolRef.current === "text")) setTool("select");
+      },
+      edit,
+      setField,
+      placeSignature: (page, rect) => {
+        if (!signature) return;
+        setSignature(null);
+        setTool("select");
+        void placeSignatureImage(signature, page, rect);
+      },
+      signField: (page, rect) => setSigDialog({ field: { page, rect } }),
+      goToPage: (page) => viewerRef.current?.goToPage(page),
+      openUri: (uri) => {
+        if (SAFE_URI.test(uri)) window.open(uri, "_blank", "noopener,noreferrer");
+      },
+      pageLabel: (page) => info.pages[page]?.label ?? String(page + 1),
+    }),
+    [engine, info, canEdit, activeTool, settings, signature, selected, draft, revs, edit, setField, placeSignatureImage],
+  );
+
+  // Reopened file: continue on the page where it was left.
+  const restorePage = useRef(doc.path ? lastPage(doc.path) : 0);
+  useEffect(() => {
+    const page = restorePage.current;
+    if (!page || !viewport.width) return;
+    restorePage.current = 0;
+    requestAnimationFrame(() => viewerRef.current?.goToPage(Math.min(page, info.pageCount - 1)));
+  }, [viewport.width, info.pageCount]);
+
+  useEffect(() => {
+    const path = doc.path;
+    if (!path || restorePage.current) return;
+    const timer = setTimeout(() => rememberPage(path, currentPage), 400);
+    return () => clearTimeout(timer);
+  }, [doc.path, currentPage]);
 
   // A newly activated tab takes the keyboard (arrows, Page Down…).
   useEffect(() => {
@@ -121,9 +347,22 @@ export function DocView(props: Props) {
       // Dialogs keep the keys for themselves.
       if (document.querySelector(".modal-backdrop")) return;
       const ctrl = e.ctrlKey || e.metaKey;
-      const inInput = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
+      const inInput =
+        e.target instanceof HTMLInputElement ||
+        e.target instanceof HTMLTextAreaElement ||
+        e.target instanceof HTMLSelectElement;
       const key = e.key.toLowerCase();
-      if (ctrl && key === "f") {
+      if (ctrl && !inInput && key === "z" && canEdit) {
+        e.preventDefault();
+        void undoRedo(e.shiftKey);
+      } else if (ctrl && !inInput && key === "y" && canEdit) {
+        e.preventDefault();
+        void undoRedo(true);
+      } else if (!ctrl && !inInput && (key === "delete" || key === "backspace") && selected) {
+        e.preventDefault();
+        setSelected(null);
+        void edit(selected.page, { op: "delete", id: selected.id });
+      } else if (ctrl && key === "f") {
         e.preventDefault();
         searchRef.current?.focus();
         searchRef.current?.select();
@@ -161,7 +400,14 @@ export function DocView(props: Props) {
         e.preventDefault();
         onToggleSidebar();
       } else if (key === "escape" && !inInput) {
-        setSelection(null);
+        if (toolRef.current !== "select") {
+          setTool("select");
+          setSignature(null);
+        } else if (selected) {
+          setSelected(null);
+        } else {
+          handleSelection(null);
+        }
       } else if (!inInput && !ctrl && (key === "arrowleft" || key === "arrowright")) {
         if (info.pageCount > 1 && fit === "page") {
           e.preventDefault();
@@ -171,7 +417,7 @@ export function DocView(props: Props) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [active, selection, search.query, runSearch, fit, info.pageCount, zoomStep, zoomTo, goToPage, onToggleSidebar, onToast, onError, t]);
+  }, [active, selection, search.query, runSearch, fit, info.pageCount, zoomStep, zoomTo, goToPage, onToggleSidebar, onToast, onError, t, canEdit, undoRedo, selected, edit, handleSelection]);
 
   const closeDialog = useCallback(() => {
     setDialog(null);
@@ -180,6 +426,7 @@ export function DocView(props: Props) {
 
   return (
     <section className={active ? "doc-view" : "doc-view inactive"} inert={!active}>
+      <EditContext value={editApi}>
       <Toolbar
         hasDoc
         dirty={doc.dirty}
@@ -202,6 +449,10 @@ export function DocView(props: Props) {
         onSaveAs={() => props.onSave(true)}
         onPrint={() => setDialog("print")}
         onOrganize={props.onOrganize}
+        canAnnotate={canEdit}
+        annotating={annotating}
+        onAnnotate={() => (annotating ? closeAnnotate() : setAnnotating(true))}
+        onSign={() => chooseTool("signature")}
         onToggleSidebar={onToggleSidebar}
         onGoToPage={goToPage}
         onZoomStep={zoomStep}
@@ -212,9 +463,23 @@ export function DocView(props: Props) {
         onExport={() => setDialog("export")}
       />
 
+      {annotating && (
+        <AnnotateBar
+          tool={tool}
+          settings={settings}
+          canUndo={history.canUndo}
+          canRedo={history.canRedo}
+          onTool={chooseTool}
+          onSettings={setSettings}
+          onUndo={() => void undoRedo(false)}
+          onRedo={() => void undoRedo(true)}
+          onClose={closeAnnotate}
+        />
+      )}
+
       <main className="workspace">
         {props.sidebarOpen && (
-          <Sidebar engine={engine} doc={info} currentPage={currentPage} onGoToPage={goToPage} />
+          <Sidebar engine={engine} doc={info} currentPage={currentPage} onGoToPage={goToPage} pageRev={editApi.pageRev} />
         )}
         <Viewer
           ref={viewerRef}
@@ -225,12 +490,16 @@ export function DocView(props: Props) {
           hits={search.hits}
           activeHit={search.active}
           selection={selection}
-          onSelection={setSelection}
+          onSelection={handleSelection}
           onViewport={onViewport}
           onCurrentPage={setCurrentPage}
           onZoom={zoomTo}
+          tool={activeTool}
+          onSelectionEnd={onSelectionEnd}
+          onPagePress={onPagePress}
         />
       </main>
+      </EditContext>
 
       {active && dialog === "export" && (
         <ExportDialog
@@ -245,6 +514,7 @@ export function DocView(props: Props) {
       {active && dialog === "print" && (
         <PrintDialog engine={engine} doc={info} currentPage={currentPage} onClose={closeDialog} />
       )}
+      {active && sigDialog && <SignatureDialog onClose={() => setSigDialog(null)} onUse={onSignatureChosen} />}
     </section>
   );
 }

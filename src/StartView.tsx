@@ -1,8 +1,9 @@
-/** The start page shown in an empty tab: open, merge, language. */
-import { Combine, FolderOpen, Globe } from "lucide-react";
+/** The start page shown in an empty tab: open, merge, recent files, language. */
+import { Combine, FileText, FolderOpen, Globe, X } from "lucide-react";
 import { Toolbar } from "./components/Toolbar";
 import { CSS_PX_PER_PT_AT_100 } from "./viewer/layout";
-import { isDesktop } from "./platform";
+import { dirname, isDesktop } from "./platform";
+import { forgetRecent, useRecent } from "./recent";
 import { LANGUAGES, setLang, useLang, useT, type Lang } from "./i18n";
 
 interface Props {
@@ -11,14 +12,19 @@ interface Props {
   sidebarOpen: boolean;
   onOpen(): void;
   onMerge(): void;
+  onOpenRecent(path: string, name: string): void;
 }
+
+/** How many recent files the start page shows */
+const RECENT_SHOWN = 6;
 
 const noop = () => {};
 const NO_SEARCH_INFO = { query: "", count: 0, active: 0, done: false, busy: false };
 
-export function StartView({ active, loading, sidebarOpen, onOpen, onMerge }: Props) {
+export function StartView({ active, loading, sidebarOpen, onOpen, onMerge, onOpenRecent }: Props) {
   const t = useT();
   const lang = useLang();
+  const recent = useRecent().slice(0, RECENT_SHOWN);
   return (
     <section className={active ? "doc-view" : "doc-view inactive"} inert={!active}>
       <Toolbar
@@ -60,6 +66,35 @@ export function StartView({ active, loading, sidebarOpen, onOpen, onMerge }: Pro
               <Combine size={16} /> {t.app.merge}
             </button>
             {!isDesktop && <p className="muted small">{t.app.localOnly}</p>}
+            {isDesktop && recent.length > 0 && (
+              <nav className="recent" aria-label={t.app.recent}>
+                <h2>{t.app.recent}</h2>
+                <ul>
+                  {recent.map((r) => (
+                    <li key={r.path}>
+                      <button
+                        className="recent-open"
+                        onClick={() => onOpenRecent(r.path, r.name)}
+                        disabled={loading}
+                        title={r.path}
+                      >
+                        <FileText size={16} />
+                        <span className="recent-name">{r.name}</span>
+                        <span className="recent-dir">{dirname(r.path)}</span>
+                      </button>
+                      <button
+                        className="recent-remove"
+                        onClick={() => forgetRecent(r.path)}
+                        title={t.app.removeRecent}
+                        aria-label={`${t.app.removeRecent}: ${r.name}`}
+                      >
+                        <X size={14} />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </nav>
+            )}
             <label className="lang-select" title={t.app.language}>
               <Globe size={15} />
               <select value={lang} onChange={(e) => setLang(e.target.value as Lang)} aria-label={t.app.language}>

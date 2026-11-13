@@ -28,6 +28,7 @@ import type { DocInfo, PageRef } from "../engine/types";
 import { fileFromDrop, openFilesDialog, savePdfAs, type OpenedFile } from "../platform";
 import { errorText } from "../errors";
 import { useT } from "../i18n";
+import { useFitLabels } from "../components/fitLabels";
 import {
   deletePages,
   groupLabel,
@@ -127,6 +128,8 @@ export function Organizer(props: Props) {
   const [splitOpen, setSplitOpen] = useState(false);
   const dragKeys = useRef<Set<string> | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const barRef = useRef<HTMLDivElement>(null);
+  useFitLabels(barRef, [t]);
   const gridRef = useRef<HTMLDivElement>(null);
   const scrollToKey = useRef<string | null>(null);
 
@@ -450,7 +453,7 @@ export function Organizer(props: Props) {
 
   return (
     <div className="organizer">
-      <div className="toolbar org-bar">
+      <div className="toolbar org-bar" ref={barRef}>
         <div className="tb-group">
           <button className="tb-btn" onClick={selectAll} disabled={!count} title={t.organize.selectAllTitle}>
             <SquareCheckBig size={18} />

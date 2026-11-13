@@ -4,6 +4,11 @@ export type Point = [number, number];
 /** Quadrilateral: ul.x, ul.y, ur.x, ur.y, ll.x, ll.y, lr.x, lr.y */
 export type Quad = [number, number, number, number, number, number, number, number];
 
+/** Rectangle: x0, y0, x1, y1 (page coordinates, y grows downwards) */
+export type Rect = [number, number, number, number];
+/** RGB color, every component 0–1 */
+export type Color = [number, number, number];
+
 export interface PageInfo {
   /** Page width and height in points */
   width: number;
@@ -64,6 +69,80 @@ export interface ExportResult {
   height: number;
 }
 
+export interface LinkInfo {
+  rect: Rect;
+  /** External target (web address, e-mail) */
+  uri?: string;
+  /** Target page of an internal link */
+  page?: number;
+}
+
+export type WidgetKind = "text" | "checkbox" | "radio" | "combobox" | "listbox" | "signature" | "button";
+
+/** A form field on a page. */
+export interface WidgetInfo {
+  id: number;
+  kind: WidgetKind;
+  name: string;
+  rect: Rect;
+  value: string;
+  options?: string[];
+  multiline: boolean;
+  readOnly: boolean;
+  maxLen: number;
+  /** Font size from the field definition; 0 = automatic */
+  fontSize: number;
+}
+
+/** An annotation on a page (highlight, note, drawing…). */
+export interface AnnotInfo {
+  id: number;
+  /** PDF annotation type: Highlight, Ink, FreeText, Text, Stamp… */
+  type: string;
+  /** What is drawn on the page */
+  bounds: Rect;
+  /** The annotation's own rectangle, when it has one (it can be moved and resized) */
+  rect?: Rect;
+  quads?: Quad[];
+  ink?: Point[][];
+  contents: string;
+  color: Color | null;
+  /** FreeText font size */
+  fontSize?: number;
+  /** Line width (Ink) */
+  width?: number;
+}
+
+export interface PageExtras {
+  links: LinkInfo[];
+  widgets: WidgetInfo[];
+  annots: AnnotInfo[];
+}
+
+export type MarkupType = "Highlight" | "Underline" | "StrikeOut";
+
+export type NewAnnot =
+  | { type: MarkupType; quads: Quad[]; color: Color }
+  | { type: "Ink"; strokes: Point[][]; color: Color; width: number }
+  | { type: "FreeText"; rect: Rect; text: string; color: Color; size: number }
+  | { type: "Text"; rect: Rect; text: string; color: Color }
+  | { type: "Stamp"; rect: Rect; image: Uint8Array };
+
+export type AnnotEdit =
+  | { op: "create"; annot: NewAnnot }
+  | { op: "move"; id: number; dx: number; dy: number }
+  | { op: "setRect"; id: number; rect: Rect }
+  | { op: "delete"; id: number }
+  | { op: "setContents"; id: number; text: string; rect?: Rect }
+  | { op: "setColor"; id: number; color: Color };
+
+/** State of the edit history after a change; `id` = the annotation that was created. */
+export interface EditState {
+  canUndo: boolean;
+  canRedo: boolean;
+  id?: number;
+}
+
 /** Requests the UI sends to the worker: name → [arguments, result] */
 export interface EngineApi {
   open: [{ data: ArrayBuffer; name: string; password?: string }, DocInfo];
@@ -82,8 +161,16 @@ export interface EngineApi {
   compose: [{ pages: PageRef[]; base?: number }, DocInfo];
   /** Builds a new PDF from pages and returns its content (extract, split). */
   buildPdf: [{ pages: PageRef[]; base?: number }, Uint8Array];
-  /** Content of an open document, for saving to disk. */
+  /** Content of an open document including all edits, for saving to disk. */
   getBytes: [{ docId: number }, Uint8Array];
+  /** Links, form fields and annotations of a page. */
+  pageExtras: [{ docId: number; page: number }, PageExtras];
+  editAnnot: [{ docId: number; page: number; edit: AnnotEdit }, EditState];
+  /** Sets a form field: text or choice value, or `toggle` for check boxes and radio buttons. */
+  setField: [{ docId: number; page: number; id: number; value?: string; toggle?: boolean }, EditState];
+  undo: [{ docId: number }, EditState];
+  redo: [{ docId: number }, EditState];
+  history: [{ docId: number }, EditState];
 }
 
 export type EngineMethod = keyof EngineApi;

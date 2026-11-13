@@ -24,6 +24,7 @@ import {
   fileFromDrop,
   isPdfName,
   onSaveAndClose,
+  openFilePath,
   openFilesDialog,
   samePath,
   savePdf,
@@ -33,6 +34,7 @@ import {
   type OpenedFile,
 } from "./platform";
 import { errorText } from "./errors";
+import { forgetRecent, rememberOpened } from "./recent";
 import { useT } from "./i18n";
 
 interface OrganizeSession {
@@ -168,6 +170,7 @@ export function App() {
               dirty: false,
             };
             commit((s) => placeDoc(s, doc)[0]);
+            if (file.path) rememberOpened(file.path, file.name);
           } catch (e) {
             setError(t.app.openFailed(file.name, errorText(e)));
           }
@@ -180,6 +183,23 @@ export function App() {
   );
   const openFilesRef = useRef(openFiles);
   openFilesRef.current = openFiles;
+
+  const openRecent = useCallback(
+    async (path: string, name: string) => {
+      try {
+        const file = await openFilePath(path);
+        if (!file) {
+          forgetRecent(path);
+          setError(t.app.recentMissing(name));
+          return;
+        }
+        await openFiles([file]);
+      } catch (e) {
+        setError(t.app.openFailed(name, errorText(e)));
+      }
+    },
+    [openFiles, t],
+  );
 
   const openDialog = useCallback(async () => {
     try {
@@ -219,6 +239,7 @@ export function App() {
           ),
         );
         setToast(t.app.saved(name));
+        if (path) rememberOpened(path, name);
         return true;
       } catch (e) {
         setError(t.app.saveFailed(errorText(e)));
@@ -255,6 +276,16 @@ export function App() {
       commit((cur) => removeTab(cur, id));
     },
     [engine, ask, activate, saveDoc, commit, t],
+  );
+
+  /** Annotations or form fields of a document were changed. */
+  const markEdited = useCallback(
+    (tabId: number) =>
+      commit((s) => {
+        const d = s.tabs.find((x) => x.id === tabId)?.doc;
+        return d && !d.dirty ? setTabDoc(s, tabId, (cur) => ({ ...cur, dirty: true })) : s;
+      }),
+    [commit],
   );
 
   // ---------- Organizing pages ----------
@@ -575,6 +606,7 @@ export function App() {
               onOpen={openDialogCb}
               onSave={(asNew) => void saveDoc(tab.id, asNew)}
               onOrganize={startOrganize}
+              onEdited={() => markEdited(tab.id)}
               onToast={setToast}
               onError={setError}
             />
@@ -586,6 +618,7 @@ export function App() {
               sidebarOpen={sidebarOpen}
               onOpen={openDialogCb}
               onMerge={() => void startMerge()}
+              onOpenRecent={(path, name) => void openRecent(path, name)}
             />
           ),
         )}

@@ -11,9 +11,11 @@ interface Props {
   doc: DocInfo;
   currentPage: number;
   onGoToPage(index: number): void;
+  /** Render revision of a page – thumbnails are redrawn when it changes. */
+  pageRev?(index: number): number;
 }
 
-export function Sidebar({ engine, doc, currentPage, onGoToPage }: Props) {
+export function Sidebar({ engine, doc, currentPage, onGoToPage, pageRev }: Props) {
   const t = useT();
   const hasOutline = doc.outline.length > 0;
   const [tab, setTab] = useState<"thumbs" | "outline">("thumbs");
@@ -42,7 +44,7 @@ export function Sidebar({ engine, doc, currentPage, onGoToPage }: Props) {
         </div>
       )}
       {activeTab === "thumbs" ? (
-        <Thumbnails engine={engine} doc={doc} currentPage={currentPage} onGoToPage={onGoToPage} />
+        <Thumbnails engine={engine} doc={doc} currentPage={currentPage} onGoToPage={onGoToPage} pageRev={pageRev} />
       ) : (
         <div className="outline">
           <OutlineList items={doc.outline} onGoToPage={onGoToPage} />
@@ -52,7 +54,7 @@ export function Sidebar({ engine, doc, currentPage, onGoToPage }: Props) {
   );
 }
 
-function Thumbnails({ engine, doc, currentPage, onGoToPage }: Props) {
+function Thumbnails({ engine, doc, currentPage, onGoToPage, pageRev }: Props) {
   const listRef = useRef<HTMLDivElement>(null);
 
   // Keep the current page visible in the list.
@@ -74,6 +76,7 @@ function Thumbnails({ engine, doc, currentPage, onGoToPage }: Props) {
           height={Math.round((THUMB_WIDTH * p.height) / p.width)}
           pageWidth={p.width}
           active={i === currentPage}
+          rev={pageRev?.(i) ?? 0}
           root={listRef}
           onClick={onGoToPage}
         />
@@ -91,17 +94,19 @@ interface ThumbProps {
   height: number;
   pageWidth: number;
   active: boolean;
+  rev: number;
   root: React.RefObject<HTMLDivElement | null>;
   onClick(index: number): void;
 }
 
 const Thumb = memo(function Thumb(props: ThumbProps) {
-  const { engine, docId, index, width, height, pageWidth } = props;
+  const { engine, docId, index, width, height, pageWidth, rev } = props;
   const t = useT();
   const ref = useRef<HTMLButtonElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [visible, setVisible] = useState(false);
-  const [loaded, setLoaded] = useState(false);
+  /** Revision the canvas shows; -1 = nothing yet */
+  const [shownRev, setShownRev] = useState(-1);
 
   useEffect(() => {
     const io = new IntersectionObserver(([entry]) => setVisible(entry.isIntersecting), {
@@ -113,7 +118,7 @@ const Thumb = memo(function Thumb(props: ThumbProps) {
   }, [props.root]);
 
   useEffect(() => {
-    if (!visible || loaded) return;
+    if (!visible || shownRev === rev) return;
     const ctrl = new AbortController();
     const scale = (width / pageWidth) * (window.devicePixelRatio || 1);
     engine
@@ -125,13 +130,13 @@ const Thumb = memo(function Thumb(props: ThumbProps) {
         c.height = bitmap.height;
         c.getContext("2d")!.drawImage(bitmap, 0, 0);
         bitmap.close();
-        setLoaded(true);
+        setShownRev(rev);
       })
       .catch((e) => {
         if (!isAbortError(e)) console.error(e);
       });
     return () => ctrl.abort();
-  }, [visible, loaded, engine, docId, index, width, pageWidth]);
+  }, [visible, shownRev, rev, engine, docId, index, width, pageWidth]);
 
   return (
     <button

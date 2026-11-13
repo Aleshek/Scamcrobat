@@ -498,6 +498,507 @@ input {
   background: rgba(37, 99, 235, 0.32);
 }
 
+/* ---------- Annotations, links and form fields on pages ---------- */
+
+/* A page with an open popup or toolbar stays above the next page. */
+.page:has(.pl-popup, .pl-tools) {
+  z-index: 3;
+}
+
+.page-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.page-layer > * {
+  pointer-events: auto;
+}
+
+.pl-link {
+  position: absolute;
+  cursor: pointer;
+  border-radius: 2px;
+}
+
+.pl-link:hover {
+  background: rgba(37, 99, 235, 0.08);
+  box-shadow: inset 0 -1.5px 0 rgba(37, 99, 235, 0.55);
+}
+
+.pl-annot {
+  position: absolute;
+  border-radius: 2px;
+}
+
+.pl-annot.markup {
+  cursor: pointer;
+}
+
+.pl-annot.box {
+  cursor: move;
+}
+
+.pl-annot.note {
+  cursor: pointer;
+}
+
+.pl-annot:hover {
+  outline: 1px dashed rgba(37, 99, 235, 0.7);
+}
+
+.page-layer > .pl-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.pl-ink-hit {
+  fill: none;
+  stroke: transparent;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  pointer-events: stroke;
+  cursor: move;
+}
+
+.pl-ink-hit:hover {
+  stroke: rgba(37, 99, 235, 0.16);
+}
+
+.pl-svg.preview polyline {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.page-layer > .pl-sel {
+  position: absolute;
+  outline: 1.5px solid #2563eb;
+  outline-offset: 2px;
+  border-radius: 2px;
+  pointer-events: none;
+}
+
+.page-layer > .pl-sel.movable {
+  pointer-events: auto;
+  cursor: move;
+}
+
+.pl-handle {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  background: #fff;
+  border: 1.5px solid #2563eb;
+  border-radius: 2px;
+}
+
+.pl-handle.h0 {
+  left: -8px;
+  top: -8px;
+  cursor: nwse-resize;
+}
+
+.pl-handle.h1 {
+  right: -8px;
+  top: -8px;
+  cursor: nesw-resize;
+}
+
+.pl-handle.h2 {
+  right: -8px;
+  bottom: -8px;
+  cursor: nwse-resize;
+}
+
+.pl-handle.h3 {
+  left: -8px;
+  bottom: -8px;
+  cursor: nesw-resize;
+}
+
+.pl-tools {
+  position: absolute;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+  white-space: nowrap;
+  cursor: default;
+}
+
+.pl-swatch,
+.ab-swatch {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 2px solid var(--surface);
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px var(--border);
+  cursor: pointer;
+}
+
+.pl-swatch.active,
+.ab-swatch.active {
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+.pl-swatch:focus-visible,
+.ab-swatch:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.pl-tool {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.pl-tool:hover {
+  background: var(--surface-2);
+}
+
+.pl-tool.danger:hover {
+  color: var(--danger);
+}
+
+/* Form fields: a light tint shows what can be filled in; the value itself is drawn
+   by MuPDF into the page, the input only shows it while typing. */
+.pl-field {
+  position: absolute;
+  box-sizing: border-box;
+  margin: 0;
+  border: 0;
+  border-radius: 2px;
+  background: rgba(59, 130, 246, 0.12);
+  font-family: Helvetica, Arial, sans-serif;
+}
+
+.pl-field:hover {
+  background: rgba(59, 130, 246, 0.2);
+}
+
+.pl-field:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 1px;
+}
+
+.pl-field.text {
+  padding: 0 2px;
+  color: transparent;
+  caret-color: transparent;
+  outline: none;
+  resize: none;
+}
+
+.pl-field.text.multi {
+  padding: 2px;
+  overflow: auto;
+}
+
+.pl-field.text:focus {
+  color: #111;
+  caret-color: #111;
+  background: #fff;
+  box-shadow: 0 0 0 2px #2563eb;
+}
+
+.pl-field.check {
+  cursor: pointer;
+}
+
+.pl-field.choice {
+  padding: 0 2px;
+  color: transparent;
+  cursor: pointer;
+  appearance: none;
+}
+
+.pl-field.choice option {
+  color: #111;
+  background: #fff;
+}
+
+.pl-field.sign {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed rgba(37, 99, 235, 0.6);
+  color: #1d4ed8;
+  font: 600 12px/1.2 system-ui, sans-serif;
+  cursor: pointer;
+}
+
+.page-layer > .pl-capture {
+  position: absolute;
+  inset: 0;
+  touch-action: none;
+}
+
+.pl-capture.tool-ink {
+  cursor: crosshair;
+}
+
+.pl-capture.tool-note,
+.pl-capture.tool-signature {
+  cursor: copy;
+}
+
+.pl-capture.tool-text {
+  cursor: text;
+}
+
+.pl-ghost {
+  position: absolute;
+  opacity: 0.65;
+  pointer-events: none;
+}
+
+.pl-popup {
+  position: absolute;
+  z-index: 3;
+}
+
+.note-popup {
+  width: 240px;
+  padding: 8px;
+  background: #fff8c5;
+  border: 1px solid #e3c94a;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+  color: #1d2026;
+  cursor: default;
+}
+
+.note-popup textarea {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 90px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: 13px/1.4 system-ui, sans-serif;
+  resize: vertical;
+  outline: none;
+}
+
+.note-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+.note-popup .pl-tool {
+  color: #1d2026;
+}
+
+.note-popup .pl-tool:hover {
+  background: rgba(0, 0, 0, 0.08);
+}
+
+.text-editor {
+  box-sizing: border-box;
+  min-width: 60px;
+  margin: 0;
+  border: 1px dashed #2563eb;
+  background: rgba(255, 255, 255, 0.94);
+  font-family: Helvetica, Arial, sans-serif;
+  white-space: pre;
+  overflow: hidden;
+  resize: none;
+  outline: none;
+  field-sizing: content;
+}
+
+/* ---------- Annotation toolbar ---------- */
+
+.annotate-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 42px;
+  padding: 4px 10px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+}
+
+.ab-group,
+.ab-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+}
+
+.ab-group .ab-swatch {
+  margin: 0 2px;
+}
+
+.ab-hint {
+  flex: 1;
+  min-width: 0;
+  padding: 0 8px;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.ab-line {
+  display: block;
+  width: 18px;
+  background: currentColor;
+  border-radius: 3px;
+}
+
+.ab-size {
+  width: 76px;
+}
+
+/* ---------- Signature dialog ---------- */
+
+.sig-saved {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.sig-card {
+  position: relative;
+}
+
+.sig-pick {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 128px;
+  height: 56px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.sig-pick:hover,
+.sig-pick:focus-visible {
+  border-color: var(--accent);
+  outline: none;
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.sig-pick img {
+  max-width: 100%;
+  max-height: 100%;
+}
+
+.sig-remove {
+  position: absolute;
+  top: -7px;
+  right: -7px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.sig-remove:hover {
+  color: var(--danger);
+}
+
+.sig-modes {
+  margin-bottom: 10px;
+}
+
+.sig-pad {
+  position: relative;
+  overflow: hidden;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.sig-pad canvas {
+  display: block;
+  position: relative;
+  z-index: 1;
+  touch-action: none;
+  cursor: crosshair;
+}
+
+.sig-pad canvas:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.sig-baseline {
+  position: absolute;
+  left: 24px;
+  right: 24px;
+  bottom: 34px;
+  border-bottom: 1px solid #c9ccd3;
+}
+
+.sig-pad.image {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 160px;
+  padding: 10px;
+  box-sizing: border-box;
+}
+
+.sig-pad.image img {
+  max-width: 100%;
+  max-height: 100%;
+}
+
+.sig-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.sig-row .hint {
+  flex: 1;
+  margin: 0;
+}
+
+.sig-inks {
+  display: flex;
+  gap: 6px;
+}
+
 /* ---------- Start page ---------- */
 
 .empty {
@@ -520,6 +1021,94 @@ input {
   border: 1px dashed var(--border);
   border-radius: 16px;
   max-width: 420px;
+}
+
+.recent {
+  align-self: stretch;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  text-align: left;
+}
+
+.recent h2 {
+  margin: 0 0 4px 8px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.recent ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.recent li {
+  display: flex;
+  align-items: center;
+  border-radius: 6px;
+}
+
+.recent li:hover {
+  background: var(--surface-2);
+}
+
+.recent-open {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: 8px;
+  align-items: center;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.recent-open svg {
+  grid-row: 1 / 3;
+  color: var(--accent);
+}
+
+.recent-name,
+.recent-dir {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.recent-name {
+  font-weight: 600;
+}
+
+.recent-dir {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.recent-remove {
+  display: inline-flex;
+  padding: 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  opacity: 0;
+}
+
+.recent li:hover .recent-remove,
+.recent-remove:focus-visible {
+  opacity: 1;
+}
+
+.recent-remove:hover {
+  color: var(--danger);
 }
 
 .empty-card h1 {
@@ -1395,10 +1984,13 @@ input {
 
 /* ---------- Narrow windows (must stay last to override the defaults) ---------- */
 
-@media (max-width: 1100px) {
-  .tb-text {
-    display: none;
-  }
+/* Labels a toolbar hides when it does not fit (see fitLabels.ts): the least needed
+   ones first, then all of them. */
+.toolbar[data-compact="1"] .tb-text.l1,
+.toolbar[data-compact="2"] .tb-text:is(.l1, .l2),
+.toolbar[data-compact="3"] .tb-text:is(.l1, .l2, .l3),
+.toolbar[data-compact="4"] .tb-text {
+  display: none;
 }
 
 /* Narrow windows (web on a phone): no sidebar and a narrower search. */

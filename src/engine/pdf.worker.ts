@@ -6,17 +6,27 @@
  */
 import * as mupdf from "mupdf";
 import type {
+  AnnotEdit,
+  AnnotInfo,
+  Color,
   DocInfo,
+  EditState,
+  LinkInfo,
+  NewAnnot,
   EngineApi,
   EngineMethod,
   EngineRequest,
   EngineResponse,
   OutlineNode,
+  PageExtras,
   PageInfo,
   PageRef,
   Point,
   Quad,
+  Rect,
   SearchHit,
+  WidgetInfo,
+  WidgetKind,
 } from "./types";
 
 interface WorkerScope {
@@ -36,9 +46,14 @@ class CodedError extends Error {
 
 interface DocEntry {
   doc: mupdf.Document;
-  /** Original file content – edits start from a clean copy of it, and it is what gets saved. */
+  /**
+   * File content of the document. Page organizing starts from a clean copy of it.
+   * Annotations and form values are edited directly in `doc`; `edited` says that
+   * `bytes` are behind and have to be written again (see snapshot).
+   */
   bytes: Uint8Array;
   password?: string;
+  edited: boolean;
 }
 
 const docs = new Map<number, DocEntry>();
@@ -104,7 +119,9 @@ function registerDoc(doc: mupdf.Document, bytes: Uint8Array, password?: string):
   }
   const title = doc.getMetaData(mupdf.Document.META_INFO_TITLE)?.trim() || null;
   const docId = nextDocId++;
-  docs.set(docId, { doc, bytes, password });
+  // Undo and redo of annotation and form edits.
+  doc.asPDF()?.enableJournal();
+  docs.set(docId, { doc, bytes, password, edited: false });
   return { docId, pageCount, pages, title, outline, isPdf: doc.asPDF() !== null };
 }
 
@@ -131,9 +148,8 @@ function buildPdf(refs: PageRef[], prefer?: number): Uint8Array {
   if (!refs.length) throw new CodedError("Document must have at least one page", "EMPTY");
 
   const baseId = pickBase(refs, prefer);
-  const baseEntry = getEntry(baseId);
   getPdf(baseId); // make sure it is a PDF
-  const base = openBytes(baseEntry.bytes, "application/pdf", baseEntry.password).asPDF()!;
+  const base = openBytes(snapshot(baseId), "application/pdf", getEntry(baseId).password).asPDF()!;
   const graftMaps = new Map<number, mupdf.PDFGraftMap>();
   try {
     const baseCount = base.countPages();
@@ -174,6 +190,27 @@ function buildPdf(refs: PageRef[], prefer?: number): Uint8Array {
     for (const map of graftMaps.values()) map.destroy();
     base.destroy();
   }
+}
+
+/**
+ * Up to date content of a document: when annotations or form fields were edited,
+ * writes the document again. Saving appends the changes to the original file
+ * (incremental save) when possible, so digital signatures stay valid. The document
+ * is then reopened from the new content, so the next save appends to it (MuPDF
+ * would otherwise append only the changes made since the previous save).
+ */
+function snapshot(docId: number): Uint8Array {
+  const entry = getEntry(docId);
+  if (!entry.edited) return entry.bytes;
+  const pdf = entry.doc.asPDF()!;
+  const options = pdf.canBeSavedIncrementally() ? "incremental,compress" : "garbage=deduplicate,compress";
+  const bytes = pdf.saveToBuffer(options).asUint8Array().slice();
+  const fresh = openBytes(bytes, "application/pdf", entry.password);
+  fresh.asPDF()?.enableJournal();
+  dropStextFor(docId);
+  entry.doc.destroy();
+  docs.set(docId, { doc: fresh, bytes, password: entry.password, edited: false });
+  return bytes;
 }
 
 function getStext(docId: number, pageIndex: number): mupdf.StructuredText {
@@ -252,6 +289,256 @@ function pixmapToImageData(pix: mupdf.Pixmap): ImageData {
     }
   }
   return new ImageData(out, w, h);
+}
+
+// ---------- Links, form fields and annotations ----------
+
+/** Annotation types the user does not see as annotations. */
+const HIDDEN_ANNOTS = new Set(["Link", "Popup", "Widget"]);
+const INVISIBLE = mupdf.PDFAnnotation.IS_HIDDEN | mupdf.PDFAnnotation.IS_NO_VIEW;
+
+const toRect = (r: number[]): Rect => [r[0], r[1], r[2], r[3]];
+
+function toColor(c: mupdf.AnnotColor | undefined): Color | null {
+  if (!c || !c.length) return null;
+  if (c.length === 1) return [c[0], c[0], c[0]];
+  if (c.length === 3) return [c[0], c[1], c[2]];
+  const [cy, m, y, k] = c as number[];
+  return [(1 - cy) * (1 - k), (1 - m) * (1 - k), (1 - y) * (1 - k)];
+}
+
+/** Stable identifier of an annotation: its PDF object number. */
+function annotId(a: mupdf.PDFAnnotation, index: number) {
+  const num = a.getObject().asIndirect();
+  return num > 0 ? num : -(index + 1);
+}
+
+function findAnnot(page: mupdf.PDFPage, id: number): mupdf.PDFAnnotation {
+  const list = page.getAnnotations();
+  for (let i = 0; i < list.length; i++) if (annotId(list[i], i) === id) return list[i];
+  throw new CodedError("Annotation not found", "NO_ANNOT");
+}
+
+function findWidget(page: mupdf.PDFPage, id: number): mupdf.PDFWidget {
+  const list = page.getWidgets();
+  for (let i = 0; i < list.length; i++) if (annotId(list[i], i) === id) return list[i];
+  throw new CodedError("Form field not found", "NO_ANNOT");
+}
+
+function widgetKind(w: mupdf.PDFWidget): WidgetKind {
+  switch (w.getFieldType()) {
+    case "text":
+      return "text";
+    case "checkbox":
+      return "checkbox";
+    case "radiobutton":
+      return "radio";
+    case "combobox":
+      return "combobox";
+    case "listbox":
+      return "listbox";
+    case "signature":
+      return "signature";
+    default:
+      return "button";
+  }
+}
+
+function readLinks(doc: mupdf.Document, page: mupdf.Page): LinkInfo[] {
+  const links: LinkInfo[] = [];
+  for (const link of page.getLinks()) {
+    const rect = toRect(link.getBounds());
+    const uri = link.getURI();
+    if (link.isExternal()) {
+      if (uri) links.push({ rect, uri });
+      continue;
+    }
+    try {
+      const target = doc.resolveLink(uri);
+      if (target >= 0) links.push({ rect, page: target });
+    } catch {
+      /* a link to nowhere */
+    }
+  }
+  return links;
+}
+
+function readWidgets(page: mupdf.PDFPage): WidgetInfo[] {
+  return page.getWidgets().map((w, i) => {
+    const kind = widgetKind(w);
+    let fontSize = 0;
+    try {
+      fontSize = w.getDefaultAppearance().size || 0;
+    } catch {
+      /* fields without a default appearance */
+    }
+    const isChoice = kind === "combobox" || kind === "listbox";
+    return {
+      id: annotId(w, i),
+      kind,
+      name: w.getLabel() || w.getName(),
+      rect: toRect(w.getRect()),
+      value: w.getValue() ?? "",
+      options: isChoice ? w.getOptions() : undefined,
+      multiline: kind === "text" && w.isMultiline(),
+      readOnly: w.isReadOnly() || (w.getFlags() & INVISIBLE) !== 0,
+      maxLen: kind === "text" ? w.getMaxLen() : 0,
+      fontSize,
+    };
+  });
+}
+
+function readAnnots(page: mupdf.PDFPage): AnnotInfo[] {
+  const out: AnnotInfo[] = [];
+  page.getAnnotations().forEach((a, i) => {
+    const type = a.getType();
+    if (HIDDEN_ANNOTS.has(type) || a.getFlags() & INVISIBLE) return;
+    const info: AnnotInfo = {
+      id: annotId(a, i),
+      type,
+      bounds: toRect(a.getBounds()),
+      contents: a.getContents() ?? "",
+      color: toColor(a.getColor()),
+    };
+    if (a.hasRect()) info.rect = toRect(a.getRect());
+    if (a.hasQuadPoints()) info.quads = a.getQuadPoints() as Quad[];
+    if (a.hasInkList()) {
+      info.ink = a.getInkList() as Point[][];
+      info.width = a.getBorderWidth();
+    }
+    if (type === "FreeText") {
+      try {
+        const da = a.getDefaultAppearance();
+        info.fontSize = da.size;
+        info.color = toColor(da.color) ?? info.color;
+      } catch {
+        /* keep defaults */
+      }
+    }
+    out.push(info);
+  });
+  return out;
+}
+
+function createAnnot(page: mupdf.PDFPage, spec: NewAnnot): mupdf.PDFAnnotation {
+  const a = page.createAnnotation(spec.type);
+  switch (spec.type) {
+    case "Highlight":
+    case "Underline":
+    case "StrikeOut":
+      a.setColor(spec.color);
+      a.setQuadPoints(spec.quads);
+      break;
+    case "Ink":
+      a.setColor(spec.color);
+      a.setBorderWidth(spec.width);
+      a.setInkList(spec.strokes);
+      break;
+    case "FreeText":
+      a.setRect(spec.rect);
+      a.setDefaultAppearance("Helv", spec.size, spec.color);
+      a.setBorderWidth(0);
+      a.setContents(spec.text);
+      break;
+    case "Text":
+      a.setRect(spec.rect);
+      a.setColor(spec.color);
+      a.setContents(spec.text);
+      break;
+    case "Stamp":
+      a.setRect(spec.rect);
+      a.setStampImage(new mupdf.Image(spec.image));
+      break;
+  }
+  a.setModificationDate(new Date());
+  a.update();
+  return a;
+}
+
+const shiftRect = (r: number[], dx: number, dy: number): Rect => [r[0] + dx, r[1] + dy, r[2] + dx, r[3] + dy];
+const shiftPoint = (p: number[], dx: number, dy: number): Point => [p[0] + dx, p[1] + dy];
+
+function moveAnnot(a: mupdf.PDFAnnotation, dx: number, dy: number) {
+  if (a.hasRect()) a.setRect(shiftRect(a.getRect(), dx, dy));
+  if (a.hasInkList()) a.setInkList(a.getInkList().map((s) => s.map((p) => shiftPoint(p, dx, dy))));
+  if (a.hasVertices()) a.setVertices(a.getVertices().map((p) => shiftPoint(p, dx, dy)));
+  if (a.hasLine()) {
+    const [p, q] = a.getLine();
+    a.setLine(shiftPoint(p, dx, dy), shiftPoint(q, dx, dy));
+  }
+  if (a.hasQuadPoints()) {
+    a.setQuadPoints(a.getQuadPoints().map((q) => q.map((v, i) => v + (i % 2 ? dy : dx)) as Quad));
+  }
+}
+
+function applyEdit(page: mupdf.PDFPage, edit: AnnotEdit): number | undefined {
+  if (edit.op === "create") {
+    const a = createAnnot(page, edit.annot);
+    return annotId(a, page.getAnnotations().length - 1);
+  }
+  const a = findAnnot(page, edit.id);
+  switch (edit.op) {
+    case "delete":
+      page.deleteAnnotation(a);
+      return;
+    case "move":
+      moveAnnot(a, edit.dx, edit.dy);
+      break;
+    case "setRect":
+      a.setRect(edit.rect);
+      break;
+    case "setContents":
+      a.setContents(edit.text);
+      if (edit.rect) a.setRect(edit.rect);
+      break;
+    case "setColor":
+      if (a.getType() === "FreeText") {
+        const da = a.getDefaultAppearance();
+        a.setDefaultAppearance(da.font || "Helv", da.size || 12, edit.color);
+      } else {
+        a.setColor(edit.color);
+      }
+      break;
+  }
+  a.setModificationDate(new Date());
+  a.update();
+}
+
+function historyOf(docId: number, id?: number): EditState {
+  const pdf = getDoc(docId).asPDF();
+  if (!pdf) return { canUndo: false, canRedo: false };
+  return { canUndo: pdf.canUndo(), canRedo: pdf.canRedo(), id };
+}
+
+/** Runs one user action as a single undo step. */
+function editPage<T>(docId: number, pageIndex: number, name: string, fn: (page: mupdf.PDFPage) => T): T {
+  const entry = getEntry(docId);
+  const pdf = getPdf(docId);
+  const page = pdf.loadPage(pageIndex);
+  pdf.beginOperation(name);
+  try {
+    const result = fn(page);
+    pdf.endOperation();
+    return result;
+  } catch (e) {
+    pdf.abandonOperation();
+    throw e;
+  } finally {
+    page.destroy();
+    entry.edited = true;
+    dropStextFor(docId);
+  }
+}
+
+function undoRedo(docId: number, redo: boolean): EditState {
+  const pdf = getPdf(docId);
+  if (redo ? pdf.canRedo() : pdf.canUndo()) {
+    if (redo) pdf.redo();
+    else pdf.undo();
+    getEntry(docId).edited = true;
+    dropStextFor(docId);
+  }
+  return historyOf(docId);
 }
 
 type Handler<M extends EngineMethod> = (
@@ -354,8 +641,51 @@ const handlers: { [M in EngineMethod]: Handler<M> } = {
   },
 
   getBytes({ docId }) {
-    const bytes = getEntry(docId).bytes.slice();
+    const bytes = snapshot(docId).slice();
     return [bytes, [bytes.buffer]];
+  },
+
+  pageExtras({ docId, page }) {
+    const doc = getDoc(docId);
+    const pg = doc.loadPage(page);
+    try {
+      const extras: PageExtras = { links: readLinks(doc, pg), widgets: [], annots: [] };
+      if (pg instanceof mupdf.PDFPage) {
+        extras.widgets = readWidgets(pg);
+        extras.annots = readAnnots(pg);
+      }
+      return [extras];
+    } finally {
+      pg.destroy();
+    }
+  },
+
+  editAnnot({ docId, page, edit }) {
+    const id = editPage(docId, page, edit.op, (pg) => applyEdit(pg, edit));
+    return [historyOf(docId, id)];
+  },
+
+  setField({ docId, page, id, value, toggle }) {
+    editPage(docId, page, "field", (pg) => {
+      const w = findWidget(pg, id);
+      if (toggle) w.toggle();
+      else if (w.isChoice()) w.setChoiceValue(value ?? "");
+      else w.setTextValue(value ?? "");
+      w.update();
+    });
+    return [historyOf(docId)];
+  },
+
+  undo({ docId }) {
+    return [undoRedo(docId, false)];
+  },
+
+  redo({ docId }) {
+    return [undoRedo(docId, true)];
+  },
+
+  history({ docId }) {
+    return [historyOf(docId)];
   },
 };
 

@@ -4,6 +4,7 @@
  */
 import {
   EngineError,
+  type AnnotEdit,
   type EngineApi,
   type EngineMethod,
   type EngineResponse,
@@ -130,9 +131,34 @@ export class PdfEngine {
     return this.call("buildPdf", { pages, base });
   }
 
-  /** Document content for saving. */
+  /** Document content including all edits, for saving. */
   getBytes(docId: number) {
     return this.call("getBytes", { docId });
+  }
+
+  /** Links, form fields and annotations of a page. */
+  pageExtras(docId: number, page: number) {
+    return this.call("pageExtras", { docId, page });
+  }
+
+  editAnnot(docId: number, page: number, edit: AnnotEdit) {
+    return this.call("editAnnot", { docId, page, edit });
+  }
+
+  setField(docId: number, page: number, id: number, change: { value?: string; toggle?: boolean }) {
+    return this.call("setField", { docId, page, id, ...change });
+  }
+
+  undo(docId: number) {
+    return this.call("undo", { docId });
+  }
+
+  redo(docId: number) {
+    return this.call("redo", { docId });
+  }
+
+  history(docId: number) {
+    return this.call("history", { docId });
   }
 
   /** Schedules rendering of a page; lower priority value = sooner. */

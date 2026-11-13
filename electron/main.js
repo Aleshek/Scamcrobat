@@ -148,9 +148,9 @@ function createWindow() {
     if (mainWindow === win) mainWindow = null;
   });
 
-  // External links open in the browser, no navigation inside the app.
+  // External links (web pages, e-mail) open in the system apps, no navigation inside the app.
   win.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https?:\/\//i.test(url)) void shell.openExternal(url);
+    if (/^(https?:\/\/|mailto:)/i.test(url)) void shell.openExternal(url);
     return { action: "deny" };
   });
   win.webContents.on("will-navigate", (e) => e.preventDefault());

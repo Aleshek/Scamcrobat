@@ -5,7 +5,8 @@
 [![CI](https://github.com/Aleshek/Scamcrobat/actions/workflows/ci.yml/badge.svg)](https://github.com/Aleshek/Scamcrobat/actions/workflows/ci.yml)
 [![Latest release](https://img.shields.io/github/v/release/Aleshek/Scamcrobat?label=release)](https://github.com/Aleshek/Scamcrobat/releases/latest)
 
-A free (AGPL-3.0) PDF viewer and page editor – no subscription, no account, no ads.
+A free (AGPL-3.0) PDF viewer and editor – comments, forms, signatures and page editing
+with no subscription, no account and no ads.
 It runs as a Windows desktop app (it can be your default program for `.pdf` files)
 and as a web page; both versions share the same code.
 
@@ -39,7 +40,7 @@ Your files are never uploaded – everything is processed right in your browser.
 The app is available in **English** and **Czech**; it follows the system language and can be
 switched on the start page.
 
-## Features (version 0.3)
+## Features (version 0.4)
 
 - open PDFs by double click, from the dialog (Ctrl+O) or by dropping them into the window
 - **tabs** for several open documents (Ctrl+Tab to switch, Ctrl+W to close, Ctrl+T for a new tab);
@@ -48,6 +49,16 @@ switched on the start page.
 - zoom with buttons, Ctrl+wheel (around the cursor), fit width (Ctrl+2), fit page (Ctrl+0), 100 % (Ctrl+1)
 - text search (Ctrl+F, Enter/F3 next result, Shift+F3 previous) – ignores case and accents
 - text selection with the mouse (double click selects a word) and copying (Ctrl+C)
+- **comments** ("Annotate"): highlight, underline and strike out text (select it with the tool
+  on, or pick the tool for an already selected text), sticky notes, text boxes and freehand
+  drawing in several colors; click a comment to move, resize, recolor or delete it; undo/redo
+  (Ctrl+Z / Ctrl+Y). Comments are standard PDF annotations, so other PDF readers show them too
+- **filling in PDF forms** – text fields, check boxes and drop-down lists right on the page
+- **signing** ("Sign"): draw your signature with the mouse, pen or finger, or load a photo of it
+  (the paper background is removed), then click where it belongs or into a signature field;
+  up to four signatures can be remembered on this device
+- **clickable links** – to other pages of the document and to web pages
+- **recent files** on the start page (desktop); a document reopens on the page where you left it
 - **printing** (Ctrl+P) – all pages, the current one or a range; landscape pages stay landscape
 - **export pages to JPG / PNG / WebP** (Ctrl+E) – DPI, quality, page range and web friendly file names
 - **organizing pages** ("Organize pages"): rotate, delete, reorder by dragging, insert pages
@@ -55,7 +66,8 @@ switched on the start page.
 - **merging several PDFs into one** (on the start page or with "Insert PDF")
 - **splitting a PDF** into single pages, chunks of N pages or ranges, and **extracting** selected pages
 - Save (Ctrl+S) and Save as (Ctrl+Shift+S); bookmarks, metadata and forms of the original
-  document are kept, and you are warned about unsaved changes when closing
+  document are kept, and you are warned about unsaved changes when closing; comments and form
+  values are appended to the end of the file whenever possible, so the original content stays intact
 - password protected documents
 - light and dark theme following the system setting
 
@@ -100,6 +112,7 @@ electron/        main process of the desktop app (window, dialogs, writing files
 src/
   engine/        PDF engine: MuPDF (WebAssembly) in a Web Worker + render queue
   viewer/        virtualized page view, zoom, text selection, highlights
+  annotate/      comments, form fields, links and signatures over the pages
   components/    toolbar, tabs, sidebar, dialogs
   export/        export to images
   print/         printing
@@ -108,6 +121,7 @@ src/
   App.tsx        tabs, opening and saving documents
   DocView.tsx    one open document: toolbar, sidebar, viewer
   platform.ts    desktop vs. web differences (dialogs, saving files)
+  recent.ts      recent files and the page each was left on
 scripts/         dev server, icons, test and demo PDFs
 ```
 
@@ -121,6 +135,15 @@ rotated by Z°" and the real PDF is built when you click Done. It starts from a 
 the original document, pages from other files are grafted into it and then everything is
 rearranged – that is why bookmarks, metadata, links and forms survive. On the desktop, saving
 goes through a temporary file, so an error (file open elsewhere, full disk) never damages the original.
+
+Comments, form values and signatures are written straight into the open PDF by MuPDF, page by
+page; the page then re-renders and shows them exactly as any other PDF reader will. Every change
+is one step of MuPDF's undo journal (Ctrl+Z / Ctrl+Y). Saving writes the document incrementally –
+the original bytes followed by the changes – and the document is reopened from the saved bytes,
+so a further save starts from what is on disk. Comments are standard annotations (Highlight,
+Underline, StrikeOut, Text, FreeText, Ink, Stamp for signatures); forms with JavaScript are filled
+in, but their scripts do not run. Remembered signatures and tool settings are kept in the app's
+local storage and never leave the device.
 
 Printing renders the chosen pages to images (150 or 300 DPI) and hands them to the system print
 dialog, one image per sheet, each sheet sized like its PDF page – the same approach the PDF
@@ -147,22 +170,36 @@ Python helper scripts (need `pip install pymupdf pillow`):
 python scripts/make-icons.py      # icons from public/logo.svg and build/file-pdf.svg
 python scripts/make-test-pdf.py   # test/fixtures/sample.pdf
 python scripts/make-demo-pdf.py   # test/fixtures/demo-en.pdf and demo-cs.pdf (README screenshots)
+python scripts/make-form-pdf.py   # test/fixtures/form.pdf (form fields, links, a rotated page)
 python pdf2jpg.py PDF             # one-off conversion of a folder of PDFs to JPG from the command line
 ```
 
 ## Roadmap
 
+Done: **0.1** viewer and export to images · **0.2** organizing pages, merging, splitting, saving ·
+**0.3** printing, tabs, English · **0.4** comments, forms, signatures, links, recent files
+
+**0.5 – redaction and text corrections**
+- redaction – text and images under the black box are really removed, not just covered
+- correcting existing text line by line (typos, dates, names, amounts): the original text is
+  removed and the new one is written in its place with the same size and color; letters missing
+  from the embedded font fall back to a font with the same metrics (Liberation)
+- password protection and permissions (printing, copying)
+
+**Later**, roughly in this order:
+
 | Feature | Effort |
 |---|---|
-| ~~Merging, splitting, deleting and rotating pages + saving PDFs~~ | done in 0.2 |
-| ~~Printing, tabs for several documents, English~~ | done in 0.3 |
-| Rotating the view, clickable links | small |
+| Rotating the view, full screen, two pages side by side | small |
 | Merging bookmarks of all merged PDFs | small |
+| Cropping pages, watermarks, page numbers | small – medium |
 | Images → PDF, PDF compression | medium |
-| Annotations (highlights, notes) and filling in forms | larger |
-| Inserting a signature image | medium |
+| Comparing two versions of a document | medium |
 | OCR of scanned documents | larger |
-| Editing existing text | very large |
+| Verifying electronic signatures, signing with a certificate | larger |
+| Editing whole paragraphs with reflow (only if line by line corrections are not enough) | very large |
+
+**Not planned:** Word → PDF (Word does it itself), PDF → Word conversion, cloud storage and sharing.
 
 ## License
 

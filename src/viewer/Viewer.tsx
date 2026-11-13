@@ -12,6 +12,7 @@ import { PRIORITY_NEARBY, PRIORITY_VISIBLE, type PdfEngine } from "../engine/eng
 import type { DocInfo, Point, Quad, SearchHit, TextSelection } from "../engine/types";
 import { clampScale, computeLayout, pageAtY, visibleRange, type Layout } from "./layout";
 import { PageView } from "./PageView";
+import type { Tool } from "../annotate/tools";
 
 export interface ViewerHandle {
   goToPage(index: number): void;
@@ -33,6 +34,12 @@ interface Props {
   onViewport(width: number, height: number): void;
   onCurrentPage(index: number): void;
   onZoom(scale: number): void;
+  /** Active annotation tool (the cursor and what dragging over text does) */
+  tool?: Tool;
+  /** Selecting text by dragging (or a double click) has finished. */
+  onSelectionEnd?(): void;
+  /** A press on a page that no annotation or field handled. */
+  onPagePress?(): void;
 }
 
 /** Which part of the window height determines the "current" page. */
@@ -188,10 +195,15 @@ export function Viewer(props: Props) {
 
   // Text selection by dragging the mouse (within one page).
   const selectionGen = useRef(0);
+  const endRef = useRef(props.onSelectionEnd);
+  endRef.current = props.onSelectionEnd;
+  const pressRef = useRef(props.onPagePress);
+  pressRef.current = props.onPagePress;
   const onPageMouseDown = useCallback(
     (e: React.MouseEvent<HTMLDivElement>, index: number) => {
       if (e.button !== 0) return;
       e.preventDefault();
+      pressRef.current?.();
       containerRef.current?.focus({ preventScroll: true });
       const pageEl = e.currentTarget;
       const info = doc.pages[index];
@@ -206,6 +218,13 @@ export function Viewer(props: Props) {
       const from = toPdf(e.clientX, e.clientY);
       let inFlight = false;
       let queued: { to: Point; mode: "chars" | "words" } | null = null;
+      // Report the end of the selection once the last request is answered.
+      let finishing = false;
+      const finish = () => {
+        if (!finishing || inFlight || queued) return;
+        finishing = false;
+        if (gen === selectionGen.current) endRef.current?.();
+      };
       const request = (to: Point, mode: "chars" | "words") => {
         if (inFlight) {
           queued = { to, mode };
@@ -225,11 +244,14 @@ export function Viewer(props: Props) {
               const q = queued;
               queued = null;
               request(q.to, q.mode);
+            } else {
+              finish();
             }
           });
       };
 
       if (e.detail === 2) {
+        finishing = true;
         request(from, "words");
         return;
       }
@@ -245,6 +267,9 @@ export function Viewer(props: Props) {
         if (!moved) {
           selectionGen.current++;
           onSelection(null);
+        } else {
+          finishing = true;
+          finish();
         }
       };
       window.addEventListener("mousemove", move);
@@ -294,7 +319,7 @@ export function Viewer(props: Props) {
   }
 
   return (
-    <div ref={containerRef} className="viewer" tabIndex={0}>
+    <div ref={containerRef} className={`viewer tool-${props.tool ?? "select"}`} tabIndex={0}>
       <div className="viewer-content" style={{ width: layout.contentWidth, height: layout.contentHeight }}>
         {pages}
       </div>

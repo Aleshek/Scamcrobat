@@ -87,6 +87,13 @@ export async function openFilesDialog(title?: string): Promise<OpenedFile[]> {
   });
 }
 
+/** Desktop: opens a file by its path (recent files); null when it no longer exists. */
+export async function openFilePath(path: string): Promise<OpenedFile | null> {
+  if (!bridge) return null;
+  const opened = await bridge.openPath(path);
+  return opened ? fromBridge(opened) : null;
+}
+
 export async function fileFromDrop(file: File): Promise<OpenedFile> {
   let path: string | undefined;
   try {

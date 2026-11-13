@@ -1,10 +1,11 @@
-import { useEffect, useState, type Ref } from "react";
+import { useEffect, useRef, useState, type Ref } from "react";
 import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
   ChevronUp,
   FolderOpen,
+  Highlighter,
   ImageDown,
   LayoutGrid,
   Maximize,
@@ -14,12 +15,14 @@ import {
   Save,
   SaveAll,
   Search,
+  Signature,
   X,
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
 import { scaleToPercent } from "../viewer/layout";
 import { useT } from "../i18n";
+import { useFitLabels } from "./fitLabels";
 
 interface Props {
   hasDoc: boolean;
@@ -39,6 +42,12 @@ interface Props {
   onSaveAs(): void;
   onPrint(): void;
   onOrganize(): void;
+  /** The document can be annotated (PDF) */
+  canAnnotate?: boolean;
+  /** The annotation tools are shown */
+  annotating?: boolean;
+  onAnnotate?(): void;
+  onSign?(): void;
   onToggleSidebar(): void;
   onGoToPage(index: number): void;
   onZoomStep(dir: 1 | -1): void;
@@ -52,13 +61,15 @@ interface Props {
 export function Toolbar(props: Props) {
   const { hasDoc, pageCount, currentPage, scale } = props;
   const t = useT();
+  const ref = useRef<HTMLElement>(null);
+  useFitLabels(ref, [t, hasDoc]);
 
   return (
-    <header className="toolbar">
+    <header className="toolbar" ref={ref}>
       <div className="tb-group">
         <button className="tb-btn" onClick={props.onOpen} title={t.toolbar.openTitle}>
           <FolderOpen size={18} />
-          <span className="tb-text">{t.toolbar.open}</span>
+          <span className="tb-text l1">{t.toolbar.open}</span>
         </button>
         <button
           className={props.dirty ? "tb-btn attention" : "tb-btn"}
@@ -67,7 +78,7 @@ export function Toolbar(props: Props) {
           title={props.dirty ? t.toolbar.saveTitle : t.toolbar.noChanges}
         >
           <Save size={18} />
-          <span className="tb-text">{t.toolbar.save}</span>
+          <span className="tb-text l1">{t.toolbar.save}</span>
         </button>
         <button className="tb-btn" onClick={props.onSaveAs} disabled={!hasDoc} title={t.toolbar.saveAs}>
           <SaveAll size={18} />
@@ -148,13 +159,34 @@ export function Toolbar(props: Props) {
       <SearchBox {...props} />
 
       <button
+        className={props.annotating ? "tb-btn toggled" : "tb-btn"}
+        disabled={!props.canAnnotate}
+        onClick={props.onAnnotate}
+        aria-pressed={!!props.annotating}
+        title={hasDoc && !props.canAnnotate ? t.toolbar.organizePdfOnly : t.toolbar.annotateTitle}
+      >
+        <Highlighter size={18} />
+        <span className="tb-text l3">{t.toolbar.annotate}</span>
+      </button>
+
+      <button
+        className="tb-btn"
+        disabled={!props.canAnnotate}
+        onClick={props.onSign}
+        title={hasDoc && !props.canAnnotate ? t.toolbar.organizePdfOnly : t.toolbar.signTitle}
+      >
+        <Signature size={18} />
+        <span className="tb-text l3">{t.toolbar.sign}</span>
+      </button>
+
+      <button
         className="tb-btn"
         disabled={!props.canOrganize}
         onClick={props.onOrganize}
         title={hasDoc && !props.canOrganize ? t.toolbar.organizePdfOnly : t.toolbar.organizeTitle}
       >
         <LayoutGrid size={18} />
-        <span className="tb-text">{t.toolbar.organize}</span>
+        <span className="tb-text l2">{t.toolbar.organize}</span>
       </button>
 
       <button className="tb-btn primary" disabled={!hasDoc} onClick={props.onExport} title={t.toolbar.exportTitle}>
