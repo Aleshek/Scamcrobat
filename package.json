@@ -5,6 +5,12 @@
   "description": "Open source prohlížeč PDF a nástroje pro práci s PDF",
   "license": "AGPL-3.0-or-later",
   "author": "Scamcrobat contributors",
+  "homepage": "https://github.com/Aleshek/Scamcrobat",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Aleshek/Scamcrobat.git"
+  },
+  "bugs": "https://github.com/Aleshek/Scamcrobat/issues",
   "private": true,
   "type": "module",
   "main": "electron/main.js",

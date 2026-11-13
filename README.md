@@ -1,8 +1,14 @@
 # Scamcrobat
 
+[![Kontrola](https://github.com/Aleshek/Scamcrobat/actions/workflows/ci.yml/badge.svg)](https://github.com/Aleshek/Scamcrobat/actions/workflows/ci.yml)
+[![Poslední verze](https://img.shields.io/github/v/release/Aleshek/Scamcrobat?label=verze)](https://github.com/Aleshek/Scamcrobat/releases/latest)
+
 Svobodný (AGPL-3.0) prohlížeč PDF a nástroje pro práci s PDF – bez předplatného.
 Běží jako desktopová aplikace pro Windows (lze nastavit jako výchozí program pro `.pdf`)
 i jako webová stránka; obě verze sdílí stejný kód.
+
+**[⬇ Stáhnout pro Windows](https://github.com/Aleshek/Scamcrobat/releases/latest)** ·
+**[Vyzkoušet v prohlížeči](https://aleshek.github.io/Scamcrobat/)**
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/viewer-dark.png">
@@ -16,7 +22,7 @@ i jako webová stránka; obě verze sdílí stejný kód.
 
 ## Stažení
 
-**Windows:** instalátor `Scamcrobat-Setup-….exe` je u [poslední verze](../../releases/latest).
+**Windows:** instalátor `Scamcrobat-Setup-….exe` je u [poslední verze](https://github.com/Aleshek/Scamcrobat/releases/latest).
 Instaluje se jen pro aktuálního uživatele (nepotřebuje práva správce) a zaregistruje se
 jako program pro `.pdf`. Windows 11 nedovolí aplikacím nastavit se jako výchozí samy, takže
 po instalaci: pravým tlačítkem na PDF → Otevřít v programu → Zvolit jinou aplikaci →
@@ -25,8 +31,8 @@ Scamcrobat → Vždy.
 Instalátor zatím není digitálně podepsaný, proto Windows SmartScreen při prvním spuštění
 zobrazí varování („Další informace → Přesto spustit“).
 
-**Web:** stejná aplikace běží i v prohlížeči (GitHub Pages tohoto repozitáře). Soubory se
-nikam neodesílají – vše se zpracovává přímo ve vašem prohlížeči.
+**Web:** stejná aplikace běží i v prohlížeči na <https://aleshek.github.io/Scamcrobat/>.
+Soubory se nikam neodesílají – vše se zpracovává přímo ve vašem prohlížeči.
 
 ## Co umí (verze 0.2)
 
