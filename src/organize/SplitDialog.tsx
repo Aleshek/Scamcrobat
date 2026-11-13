@@ -4,12 +4,14 @@ import type { PdfEngine } from "../engine/engine";
 import { Modal } from "../components/Modal";
 import { chooseExportTarget, isDesktop, type ExportTarget } from "../platform";
 import { safeFileName } from "../export/pageRange";
-import { chunkGroups, groupLabel, pageCountLabel, parseRangeGroups, toRefs, type OrgPage } from "./model";
+import { errorText } from "../errors";
+import { useT } from "../i18n";
+import { chunkGroups, groupLabel, parseRangeGroups, toRefs, type OrgPage } from "./model";
 
 interface Props {
   engine: PdfEngine;
   pages: OrgPage[];
-  /** Původní dokument (záložky, metadata) */
+  /** The original document (bookmarks, metadata) */
   base?: number;
   baseName: string;
   baseDir?: string;
@@ -24,9 +26,8 @@ type Phase =
   | { kind: "finished"; count: number; target: ExportTarget }
   | { kind: "failed"; message: string };
 
-const filesLabel = (n: number) => (n === 1 ? "1 soubor" : n >= 2 && n <= 4 ? `${n} soubory` : `${n} souborů`);
-
 export function SplitDialog({ engine, pages, base, baseName, baseDir, onClose }: Props) {
+  const t = useT();
   const count = pages.length;
   const [mode, setMode] = useState<Mode>("each");
   const [chunk, setChunk] = useState(2);
@@ -44,7 +45,7 @@ export function SplitDialog({ engine, pages, base, baseName, baseDir, onClose }:
   }, [mode, chunk, rangesText, count]);
 
   const stem = safeFileName(baseName);
-  const nameFor = (group: number[]) => `${stem}_${groupLabel(group)}.pdf`;
+  const nameFor = (group: number[]) => `${stem}_${groupLabel(group, t.organize.selectionSuffix)}.pdf`;
 
   async function run() {
     if (!groups?.length) return;
@@ -52,7 +53,7 @@ export function SplitDialog({ engine, pages, base, baseName, baseDir, onClose }:
     try {
       target = await chooseExportTarget(baseDir);
     } catch (e) {
-      setPhase({ kind: "failed", message: e instanceof Error ? e.message : String(e) });
+      setPhase({ kind: "failed", message: errorText(e) });
       return;
     }
     if (!target) return;
@@ -69,22 +70,20 @@ export function SplitDialog({ engine, pages, base, baseName, baseDir, onClose }:
       }
       setPhase({ kind: "finished", count: done, target });
     } catch (e) {
-      setPhase({ kind: "failed", message: e instanceof Error ? e.message : String(e) });
+      setPhase({ kind: "failed", message: errorText(e) });
     }
   }
 
   if (phase.kind === "running") {
     return (
-      <Modal title="Rozdělit PDF" onClose={() => (cancelled.current = true)} locked>
-        <p>
-          Ukládám soubor {Math.min(phase.done + 1, phase.total)} z {phase.total}…
-        </p>
+      <Modal title={t.split.title} onClose={() => (cancelled.current = true)} locked>
+        <p>{t.split.running(Math.min(phase.done + 1, phase.total), phase.total)}</p>
         <div className="progress">
           <div className="progress-bar" style={{ width: `${(phase.done / phase.total) * 100}%` }} />
         </div>
         <div className="modal-actions">
           <button className="btn" onClick={() => (cancelled.current = true)}>
-            Zastavit
+            {t.common.stop}
           </button>
         </div>
       </Modal>
@@ -95,17 +94,17 @@ export function SplitDialog({ engine, pages, base, baseName, baseDir, onClose }:
     const { count: saved, target } = phase;
     return (
       <Modal
-        title="Rozdělení dokončeno"
+        title={t.split.finishedTitle}
         onClose={onClose}
         footer={
           <>
             {target.reveal && (
               <button className="btn" onClick={target.reveal}>
-                <FolderOpen size={16} /> Otevřít složku
+                <FolderOpen size={16} /> {t.common.openFolder}
               </button>
             )}
             <button className="btn primary" onClick={onClose}>
-              Hotovo
+              {t.common.done}
             </button>
           </>
         }
@@ -113,7 +112,7 @@ export function SplitDialog({ engine, pages, base, baseName, baseDir, onClose }:
         <div className="export-done">
           <CheckCircle2 size={28} className="ok-icon" />
           <p>
-            Uloženo: {filesLabel(saved)}
+            {t.split.saved(t.common.files(saved))}
             <br />
             <span className="muted">{target.label}</span>
           </p>
@@ -124,30 +123,30 @@ export function SplitDialog({ engine, pages, base, baseName, baseDir, onClose }:
 
   return (
     <Modal
-      title="Rozdělit PDF"
+      title={t.split.title}
       onClose={onClose}
       footer={
         <>
           <button className="btn" onClick={onClose}>
-            Zrušit
+            {t.common.cancel}
           </button>
           <button className="btn primary" disabled={!groups?.length} onClick={run}>
-            {isDesktop ? "Vybrat složku a rozdělit" : "Rozdělit"}
+            {isDesktop ? t.split.chooseAndSplit : t.split.split}
           </button>
         </>
       }
     >
-      {phase.kind === "failed" && <div className="alert">Rozdělení selhalo: {phase.message}</div>}
+      {phase.kind === "failed" && <div className="alert">{t.split.failed(phase.message)}</div>}
 
       <fieldset className="field">
-        <legend>Jak rozdělit</legend>
+        <legend>{t.split.how}</legend>
         <label className="radio">
           <input type="radio" checked={mode === "each"} onChange={() => setMode("each")} />
-          Každou stránku zvlášť
+          {t.split.each}
         </label>
         <label className="radio">
           <input type="radio" checked={mode === "chunk"} onChange={() => setMode("chunk")} />
-          Po
+          {t.split.chunkBefore}
           <input
             className="input split-num"
             type="number"
@@ -156,40 +155,38 @@ export function SplitDialog({ engine, pages, base, baseName, baseDir, onClose }:
             value={chunk}
             onFocus={() => setMode("chunk")}
             onChange={(e) => setChunk(parseInt(e.target.value, 10) || 0)}
-            aria-label="Počet stránek v jednom souboru"
+            aria-label={t.split.chunkLabel}
           />
-          stránkách
+          {t.split.chunkAfter}
         </label>
         <label className="radio">
           <input type="radio" checked={mode === "ranges"} onChange={() => setMode("ranges")} />
-          Podle rozsahů
+          {t.split.byRanges}
           <input
             className={mode === "ranges" && !groups ? "input invalid" : "input"}
             value={rangesText}
             onFocus={() => setMode("ranges")}
             onChange={(e) => setRangesText(e.target.value)}
-            placeholder="např. 1-3, 4-6, 7-"
+            placeholder={t.split.rangesPlaceholder}
           />
         </label>
         <p className="hint">
-          {mode === "ranges"
-            ? "Každý rozsah oddělený čárkou bude samostatný soubor."
-            : `Dokument má ${pageCountLabel(count)}.`}
+          {mode === "ranges" ? t.split.rangesHint : t.split.docHas(t.common.pages(count))}
         </p>
       </fieldset>
 
       <fieldset className="field">
-        <legend>Výsledek</legend>
+        <legend>{t.split.result}</legend>
         {groups?.length ? (
           <>
-            <p className="hint">{filesLabel(groups.length)}:</p>
+            <p className="hint">{t.common.files(groups.length)}:</p>
             <p className="hint mono">
               {groups.slice(0, 3).map(nameFor).join(", ")}
               {groups.length > 3 && `, … ${nameFor(groups[groups.length - 1])}`}
             </p>
           </>
         ) : (
-          <p className="hint error">Zadejte platné rozsahy stránek (1–{count}).</p>
+          <p className="hint error">{t.split.invalid(count)}</p>
         )}
       </fieldset>
     </Modal>

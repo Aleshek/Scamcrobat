@@ -1,6 +1,6 @@
 /**
- * Rozparsuje rozsah stránek typu "1-3, 5, 8-" (číslováno od 1) na indexy od 0.
- * Vrací null, pokud zápis není platný.
+ * Parses a page range like "1-3, 5, 8-" (numbered from 1) into 0-based indices.
+ * Returns null when the text is not valid.
  */
 export function parsePageRange(text: string, pageCount: number): number[] | null {
   const parts = text
@@ -27,7 +27,7 @@ export function parsePageRange(text: string, pageCount: number): number[] | null
   return [...result].sort((a, b) => a - b);
 }
 
-/** Název souboru bez diakritiky, mezer a speciálních znaků – vhodný do URL. */
+/** File name without accents, spaces and special characters – safe for URLs. */
 export function webSafeName(name: string): string {
   return (
     name
@@ -35,11 +35,11 @@ export function webSafeName(name: string): string {
       .replace(/[̀-ͯ]/g, "")
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "") || "dokument"
+      .replace(/^-+|-+$/g, "") || "document"
   );
 }
 
-/** Odstraní znaky, které Windows v názvu souboru nedovolí. */
+/** Removes characters that Windows does not allow in file names. */
 export function safeFileName(name: string): string {
-  return name.replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_").replace(/[. ]+$/, "") || "dokument";
+  return name.replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_").replace(/[. ]+$/, "") || "document";
 }

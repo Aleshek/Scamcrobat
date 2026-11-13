@@ -1,8 +1,8 @@
 import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 
-// Přísná Content-Security-Policy jen pro produkční build (dev server Vite
-// potřebuje inline skripty a websocket pro HMR).
+// Strict Content-Security-Policy for the production build only (the Vite dev server
+// needs inline scripts and a websocket for HMR).
 const CSP = [
   "default-src 'self'",
   "script-src 'self' 'wasm-unsafe-eval'",
@@ -28,7 +28,7 @@ function cspPlugin(): Plugin {
 }
 
 export default defineConfig({
-  // Relativní cesty, aby build fungoval z app:// protokolu i z libovolné podsložky webu.
+  // Relative paths, so the build works from the app:// protocol and from any subfolder of a website.
   base: "./",
   plugins: [react(), cspPlugin()],
   build: {
@@ -40,7 +40,7 @@ export default defineConfig({
     format: "es",
   },
   optimizeDeps: {
-    // MuPDF načítá vlastní .wasm přes import.meta.url – nesmí se předbalit.
+    // MuPDF loads its own .wasm through import.meta.url – it must not be pre-bundled.
     exclude: ["mupdf"],
   },
 });

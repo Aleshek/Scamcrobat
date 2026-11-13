@@ -1,6 +1,6 @@
 /**
- * Klient PDF jádra: posílá požadavky workeru a řídí frontu vykreslování
- * (viditelné stránky mají přednost, zrušené požadavky se vůbec nepošlou).
+ * Client of the PDF engine: sends requests to the worker and manages the render queue
+ * (visible pages go first, cancelled requests are never sent).
  */
 import {
   EngineError,
@@ -28,7 +28,7 @@ interface QueuedRender {
   onAbort?: () => void;
 }
 
-/** Kolik vykreslovacích požadavků smí být najednou ve workeru. */
+/** How many render requests may be in the worker at once. */
 const MAX_IN_FLIGHT = 2;
 
 export const PRIORITY_VISIBLE = 0;
@@ -36,7 +36,7 @@ export const PRIORITY_NEARBY = 1;
 export const PRIORITY_THUMBNAIL = 2;
 
 export function abortError() {
-  return new DOMException("Zrušeno", "AbortError");
+  return new DOMException("Aborted", "AbortError");
 }
 
 export function isAbortError(e: unknown) {
@@ -72,7 +72,7 @@ export class PdfEngine {
       else p.reject(new EngineError(msg.error.message, msg.error.code));
     };
     this.worker.onerror = (e) => {
-      const err = new EngineError(`PDF jádro selhalo: ${e.message || "neznámá chyba"}`, "WORKER");
+      const err = new EngineError(`PDF engine failed: ${e.message || "unknown error"}`, "WORKER");
       markFailed(err);
       for (const p of this.pending.values()) p.reject(err);
       this.pending.clear();
@@ -118,24 +118,24 @@ export class PdfEngine {
   }
 
   /**
-   * Sestaví nové PDF ze stránek a otevře ho jako nový dokument.
-   * `base` = dokument, jehož záložky a metadata se mají zachovat (pokud z něj zůstala nějaká stránka).
+   * Builds a new PDF from pages and opens it as a new document.
+   * `base` = the document whose bookmarks and metadata should be kept (if any of its pages remain).
    */
   compose(pages: PageRef[], base?: number) {
     return this.call("compose", { pages, base });
   }
 
-  /** Sestaví nové PDF ze stránek a vrátí jeho obsah. */
+  /** Builds a new PDF from pages and returns its content. */
   buildPdf(pages: PageRef[], base?: number) {
     return this.call("buildPdf", { pages, base });
   }
 
-  /** Obsah dokumentu pro uložení. */
+  /** Document content for saving. */
   getBytes(docId: number) {
     return this.call("getBytes", { docId });
   }
 
-  /** Naplánuje vykreslení stránky; nižší priorita = dřív. */
+  /** Schedules rendering of a page; lower priority value = sooner. */
   render(
     docId: number,
     page: number,

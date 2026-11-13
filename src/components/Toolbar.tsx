@@ -10,6 +10,7 @@ import {
   Maximize,
   MoveHorizontal,
   PanelLeft,
+  Printer,
   Save,
   SaveAll,
   Search,
@@ -18,14 +19,13 @@ import {
   ZoomOut,
 } from "lucide-react";
 import { scaleToPercent } from "../viewer/layout";
+import { useT } from "../i18n";
 
 interface Props {
-  /** Mění se s každým otevřeným dokumentem (vynuluje pole hledání). */
-  docKey: number;
   hasDoc: boolean;
-  /** Dokument má neuložené změny */
+  /** The document has unsaved changes */
   dirty: boolean;
-  /** Dokument je PDF, takže jde upravovat */
+  /** The document is a PDF, so it can be edited */
   canOrganize: boolean;
   pageCount: number;
   currentPage: number;
@@ -37,6 +37,7 @@ interface Props {
   onOpen(): void;
   onSave(): void;
   onSaveAs(): void;
+  onPrint(): void;
   onOrganize(): void;
   onToggleSidebar(): void;
   onGoToPage(index: number): void;
@@ -50,32 +51,36 @@ interface Props {
 
 export function Toolbar(props: Props) {
   const { hasDoc, pageCount, currentPage, scale } = props;
+  const t = useT();
 
   return (
     <header className="toolbar">
       <div className="tb-group">
-        <button className="tb-btn" onClick={props.onOpen} title="Otevřít PDF (Ctrl+O)">
+        <button className="tb-btn" onClick={props.onOpen} title={t.toolbar.openTitle}>
           <FolderOpen size={18} />
-          <span className="tb-text">Otevřít</span>
+          <span className="tb-text">{t.toolbar.open}</span>
         </button>
         <button
           className={props.dirty ? "tb-btn attention" : "tb-btn"}
           onClick={props.onSave}
           disabled={!props.dirty}
-          title={props.dirty ? "Uložit změny (Ctrl+S)" : "Žádné neuložené změny"}
+          title={props.dirty ? t.toolbar.saveTitle : t.toolbar.noChanges}
         >
           <Save size={18} />
-          <span className="tb-text">Uložit</span>
+          <span className="tb-text">{t.toolbar.save}</span>
         </button>
-        <button className="tb-btn" onClick={props.onSaveAs} disabled={!hasDoc} title="Uložit jako… (Ctrl+Shift+S)">
+        <button className="tb-btn" onClick={props.onSaveAs} disabled={!hasDoc} title={t.toolbar.saveAs}>
           <SaveAll size={18} />
+        </button>
+        <button className="tb-btn" onClick={props.onPrint} disabled={!hasDoc} title={t.toolbar.print}>
+          <Printer size={18} />
         </button>
         <div className="tb-sep" />
         <button
           className={hasDoc && props.sidebarOpen ? "tb-btn toggled" : "tb-btn"}
           onClick={props.onToggleSidebar}
           disabled={!hasDoc}
-          title="Panel stránek (F4)"
+          title={t.toolbar.sidebar}
           aria-pressed={props.sidebarOpen}
         >
           <PanelLeft size={18} />
@@ -89,7 +94,7 @@ export function Toolbar(props: Props) {
           className="tb-btn"
           disabled={!hasDoc || currentPage <= 0}
           onClick={() => props.onGoToPage(currentPage - 1)}
-          title="Předchozí stránka"
+          title={t.toolbar.prevPage}
         >
           <ChevronLeft size={18} />
         </button>
@@ -104,7 +109,7 @@ export function Toolbar(props: Props) {
           className="tb-btn"
           disabled={!hasDoc || currentPage >= pageCount - 1}
           onClick={() => props.onGoToPage(currentPage + 1)}
-          title="Další stránka"
+          title={t.toolbar.nextPage}
         >
           <ChevronRight size={18} />
         </button>
@@ -113,18 +118,18 @@ export function Toolbar(props: Props) {
       <div className="tb-sep" />
 
       <div className="tb-group">
-        <button className="tb-btn" disabled={!hasDoc} onClick={() => props.onZoomStep(-1)} title="Oddálit (Ctrl+−)">
+        <button className="tb-btn" disabled={!hasDoc} onClick={() => props.onZoomStep(-1)} title={t.toolbar.zoomOut}>
           <ZoomOut size={18} />
         </button>
         <ZoomInput disabled={!hasDoc} percent={scaleToPercent(scale)} onCommit={props.onZoomPercent} />
-        <button className="tb-btn" disabled={!hasDoc} onClick={() => props.onZoomStep(1)} title="Přiblížit (Ctrl++)">
+        <button className="tb-btn" disabled={!hasDoc} onClick={() => props.onZoomStep(1)} title={t.toolbar.zoomIn}>
           <ZoomIn size={18} />
         </button>
         <button
           className={hasDoc && props.fit === "width" ? "tb-btn toggled" : "tb-btn"}
           disabled={!hasDoc}
           onClick={() => props.onFit("width")}
-          title="Přizpůsobit šířce (Ctrl+2)"
+          title={t.toolbar.fitWidth}
         >
           <MoveHorizontal size={18} />
         </button>
@@ -132,7 +137,7 @@ export function Toolbar(props: Props) {
           className={hasDoc && props.fit === "page" ? "tb-btn toggled" : "tb-btn"}
           disabled={!hasDoc}
           onClick={() => props.onFit("page")}
-          title="Celá stránka (Ctrl+0)"
+          title={t.toolbar.fitPage}
         >
           <Maximize size={17} />
         </button>
@@ -140,27 +145,28 @@ export function Toolbar(props: Props) {
 
       <div className="tb-spacer" />
 
-      <SearchBox key={props.docKey} {...props} />
+      <SearchBox {...props} />
 
       <button
         className="tb-btn"
         disabled={!props.canOrganize}
         onClick={props.onOrganize}
-        title={hasDoc && !props.canOrganize ? "Upravovat lze jen PDF" : "Otočit, smazat, přeskládat, vložit nebo rozdělit stránky"}
+        title={hasDoc && !props.canOrganize ? t.toolbar.organizePdfOnly : t.toolbar.organizeTitle}
       >
         <LayoutGrid size={18} />
-        <span className="tb-text">Uspořádat stránky</span>
+        <span className="tb-text">{t.toolbar.organize}</span>
       </button>
 
-      <button className="tb-btn primary" disabled={!hasDoc} onClick={props.onExport} title="Exportovat jako obrázky (Ctrl+E)">
+      <button className="tb-btn primary" disabled={!hasDoc} onClick={props.onExport} title={t.toolbar.exportTitle}>
         <ImageDown size={18} />
-        <span className="tb-text">Export do obrázků</span>
+        <span className="tb-text">{t.toolbar.export}</span>
       </button>
     </header>
   );
 }
 
 function PageInput(props: { disabled: boolean; value: number; max: number; onCommit(n: number): void }) {
+  const t = useT();
   const [text, setText] = useState(String(props.value || ""));
   const [editing, setEditing] = useState(false);
   useEffect(() => {
@@ -177,7 +183,7 @@ function PageInput(props: { disabled: boolean; value: number; max: number; onCom
       disabled={props.disabled}
       value={text}
       inputMode="numeric"
-      aria-label="Číslo stránky"
+      aria-label={t.toolbar.pageNumber}
       onFocus={(e) => {
         setEditing(true);
         e.currentTarget.select();
@@ -198,6 +204,7 @@ function PageInput(props: { disabled: boolean; value: number; max: number; onCom
 }
 
 function ZoomInput(props: { disabled: boolean; percent: number; onCommit(p: number): void }) {
+  const t = useT();
   const [text, setText] = useState(`${props.percent} %`);
   const [editing, setEditing] = useState(false);
   useEffect(() => {
@@ -208,7 +215,7 @@ function ZoomInput(props: { disabled: boolean; percent: number; onCommit(p: numb
       className="tb-input zoom-input"
       disabled={props.disabled}
       value={props.disabled ? "" : text}
-      aria-label="Zoom v procentech"
+      aria-label={t.toolbar.zoomPercent}
       onFocus={(e) => {
         setEditing(true);
         setText(String(props.percent));
@@ -231,12 +238,13 @@ function ZoomInput(props: { disabled: boolean; percent: number; onCommit(p: numb
 
 function SearchBox(props: Props) {
   const { searchInfo, hasDoc } = props;
+  const t = useT();
   const [text, setText] = useState("");
 
   let status = "";
-  if (searchInfo.busy) status = "Hledám…";
+  if (searchInfo.busy) status = t.toolbar.searching;
   else if (searchInfo.done && searchInfo.query === text.trim())
-    status = searchInfo.count ? `${searchInfo.active + 1} / ${searchInfo.count}` : "Nenalezeno";
+    status = searchInfo.count ? `${searchInfo.active + 1} / ${searchInfo.count}` : t.toolbar.notFound;
 
   return (
     <div className={hasDoc ? "search" : "search disabled"}>
@@ -244,7 +252,7 @@ function SearchBox(props: Props) {
       <input
         ref={props.searchRef}
         className="search-input"
-        placeholder="Hledat v dokumentu"
+        placeholder={t.toolbar.searchPlaceholder}
         disabled={!hasDoc}
         value={text}
         onChange={(e) => setText(e.target.value)}
@@ -257,15 +265,15 @@ function SearchBox(props: Props) {
             props.onSearchClear();
           }
         }}
-        aria-label="Hledat v dokumentu"
+        aria-label={t.toolbar.searchPlaceholder}
       />
       {status && <span className="search-status">{status}</span>}
       {searchInfo.count > 0 && searchInfo.query === text.trim() && (
         <>
-          <button className="search-btn" onClick={() => props.onSearch(text.trim(), -1)} title="Předchozí (Shift+F3)">
+          <button className="search-btn" onClick={() => props.onSearch(text.trim(), -1)} title={t.toolbar.searchPrev}>
             <ChevronUp size={16} />
           </button>
-          <button className="search-btn" onClick={() => props.onSearch(text.trim(), 1)} title="Další (F3)">
+          <button className="search-btn" onClick={() => props.onSearch(text.trim(), 1)} title={t.toolbar.searchNext}>
             <ChevronDown size={16} />
           </button>
         </>
@@ -277,7 +285,7 @@ function SearchBox(props: Props) {
             setText("");
             props.onSearchClear();
           }}
-          title="Zrušit hledání"
+          title={t.toolbar.searchClear}
         >
           <X size={15} />
         </button>

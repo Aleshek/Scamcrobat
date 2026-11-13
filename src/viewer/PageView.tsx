@@ -2,7 +2,7 @@ import { memo, useEffect, useRef, useState } from "react";
 import { isAbortError, type PdfEngine } from "../engine/engine";
 import type { PageInfo, Quad } from "../engine/types";
 
-/** Horní limit velikosti bitmapy jedné stránky (pixely) – chrání paměť při velkém zoomu. */
+/** Upper limit of a page bitmap size (pixels) – protects memory at high zoom. */
 const MAX_PIXELS = 16_000_000;
 
 interface Props {
@@ -50,7 +50,7 @@ export const PageView = memo(function PageView(props: Props) {
     const pixels = info.width * renderScale * info.height * renderScale;
     if (pixels > MAX_PIXELS) renderScale *= Math.sqrt(MAX_PIXELS / pixels);
 
-    // Při změně zoomu chvíli počkáme (roztažený starý obrázek mezitím stačí).
+    // After a zoom change wait a moment (the stretched old image is good enough meanwhile).
     const timer = setTimeout(
       () => {
         engine
@@ -66,7 +66,7 @@ export const PageView = memo(function PageView(props: Props) {
             setLoaded(true);
           })
           .catch((e) => {
-            if (!isAbortError(e)) console.error(`Stránku ${index + 1} se nepodařilo vykreslit`, e);
+            if (!isAbortError(e)) console.error(`Failed to render page ${index + 1}`, e);
           });
       },
       hasImage.current ? 150 : 0,

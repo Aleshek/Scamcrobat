@@ -3,7 +3,7 @@ import type { PageInfo } from "../engine/types";
 export const PAGE_GAP = 14;
 export const PAGE_PAD = 20;
 
-/** 100 % v UI = skutečná velikost na monitoru s 96 DPI (stejně jako Acrobat). */
+/** 100 % in the UI = real size on a 96 DPI screen (same as Acrobat). */
 export const CSS_PX_PER_PT_AT_100 = 96 / 72;
 export const MIN_SCALE = 0.1 * CSS_PX_PER_PT_AT_100;
 export const MAX_SCALE = 8 * CSS_PX_PER_PT_AT_100;
@@ -20,7 +20,7 @@ export function percentToScale(percent: number) {
   return clampScale((percent / 100) * CSS_PX_PER_PT_AT_100);
 }
 
-/** Pevné kroky zoomu pro tlačítka +/− (v procentech). */
+/** Fixed zoom steps for the +/− buttons (in percent). */
 const ZOOM_STEPS = [10, 25, 33, 50, 67, 75, 90, 100, 110, 125, 150, 175, 200, 250, 300, 400, 500, 650, 800];
 
 export function nextZoomStep(scale: number, dir: 1 | -1) {
@@ -65,7 +65,7 @@ export function computeLayout(pages: PageInfo[], scale: number, viewportWidth: n
   return { scale, tops, lefts, widths, heights, contentWidth, contentHeight };
 }
 
-/** Index první stránky, jejíž spodní hrana je pod hodnotou y. */
+/** Index of the first page whose bottom edge is below y. */
 export function pageAtY(layout: Layout, y: number): number {
   const { tops, heights } = layout;
   let lo = 0;
@@ -87,7 +87,7 @@ export function visibleRange(layout: Layout, top: number, bottom: number): [numb
   return [first, last];
 }
 
-/** Měřítko, při kterém se stránky vejdou na šířku / celé do okna. */
+/** Scale at which the pages fit the window width / fit entirely. */
 export function fitScale(
   pages: PageInfo[],
   mode: "width" | "page",

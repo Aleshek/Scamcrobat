@@ -3,14 +3,17 @@ import { CheckCircle2, FolderOpen } from "lucide-react";
 import type { PdfEngine } from "../engine/engine";
 import type { DocInfo, ImageFormat } from "../engine/types";
 import { Modal } from "../components/Modal";
+import { PageScopeField, usePageScope } from "../components/PageScope";
 import { chooseExportTarget, isDesktop, type ExportTarget } from "../platform";
-import { parsePageRange, safeFileName, webSafeName } from "./pageRange";
+import { errorText } from "../errors";
+import { useT } from "../i18n";
+import { safeFileName, webSafeName } from "./pageRange";
 
 interface Props {
   engine: PdfEngine;
   doc: DocInfo;
   fileName: string;
-  /** Výchozí složka pro výběr cíle exportu */
+  /** Default folder offered when choosing the export destination */
   defaultDir?: string;
   currentPage: number;
   onClose(): void;
@@ -25,16 +28,11 @@ interface Settings {
 
 const STORAGE_KEY = "scamcrobat.export";
 const DEFAULTS: Settings = { format: "jpg", dpi: 200, quality: 85, webNames: false };
-const DPI_PRESETS = [
-  { dpi: 72, label: "72", hint: "náhled" },
-  { dpi: 150, label: "150", hint: "web" },
-  { dpi: 200, label: "200", hint: "web, ostré" },
-  { dpi: 300, label: "300", hint: "tisk" },
-];
-const FORMATS: { id: ImageFormat; label: string; hint: string }[] = [
-  { id: "jpg", label: "JPG", hint: "Nejmenší soubory, ideální pro fotky a skeny" },
-  { id: "png", label: "PNG", hint: "Bezeztrátový, ostrý text, větší soubory" },
-  { id: "webp", label: "WebP", hint: "Moderní formát pro web, menší než JPG" },
+const DPI_PRESETS = [72, 150, 200, 300];
+const FORMATS: { id: ImageFormat; label: string }[] = [
+  { id: "jpg", label: "JPG" },
+  { id: "png", label: "PNG" },
+  { id: "webp", label: "WebP" },
 ];
 
 function loadSettings(): Settings {
@@ -42,7 +40,7 @@ function loadSettings(): Settings {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) return { ...DEFAULTS, ...JSON.parse(raw) };
   } catch {
-    /* localStorage nemusí být dostupné */
+    /* localStorage may be unavailable */
   }
   return DEFAULTS;
 }
@@ -51,7 +49,7 @@ function saveSettings(s: Settings) {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(s));
   } catch {
-    /* nevadí */
+    /* not critical */
   }
 }
 
@@ -62,9 +60,10 @@ type Phase =
   | { kind: "failed"; message: string };
 
 export function ExportDialog({ engine, doc, fileName, defaultDir, currentPage, onClose }: Props) {
+  const t = useT();
   const [settings, setSettings] = useState<Settings>(loadSettings);
-  const [scope, setScope] = useState<"all" | "current" | "range">("all");
-  const [rangeText, setRangeText] = useState(`1-${doc.pageCount}`);
+  const scope = usePageScope(doc.pageCount, currentPage);
+  const pages = scope.pages;
   const [phase, setPhase] = useState<Phase>({ kind: "setup" });
   const cancelled = useRef(false);
 
@@ -73,12 +72,6 @@ export function ExportDialog({ engine, doc, fileName, defaultDir, currentPage, o
     setSettings(next);
     saveSettings(next);
   };
-
-  const pages = useMemo(() => {
-    if (scope === "all") return doc.pages.map((_, i) => i);
-    if (scope === "current") return [currentPage];
-    return parsePageRange(rangeText, doc.pageCount);
-  }, [scope, rangeText, doc, currentPage]);
 
   const sample = doc.pages[pages?.[0] ?? 0];
   const pxW = Math.round((sample.width * settings.dpi) / 72);
@@ -100,7 +93,7 @@ export function ExportDialog({ engine, doc, fileName, defaultDir, currentPage, o
     try {
       target = await chooseExportTarget(defaultDir);
     } catch (e) {
-      setPhase({ kind: "failed", message: e instanceof Error ? e.message : String(e) });
+      setPhase({ kind: "failed", message: errorText(e) });
       return;
     }
     if (!target) return;
@@ -117,22 +110,20 @@ export function ExportDialog({ engine, doc, fileName, defaultDir, currentPage, o
       }
       setPhase({ kind: "finished", count, target });
     } catch (e) {
-      setPhase({ kind: "failed", message: e instanceof Error ? e.message : String(e) });
+      setPhase({ kind: "failed", message: errorText(e) });
     }
   }
 
   if (phase.kind === "running") {
     return (
-      <Modal title="Export do obrázků" onClose={() => (cancelled.current = true)} locked>
-        <p>
-          Exportuji stránku {Math.min(phase.done + 1, phase.total)} z {phase.total}…
-        </p>
+      <Modal title={t.export.title} onClose={() => (cancelled.current = true)} locked>
+        <p>{t.export.running(Math.min(phase.done + 1, phase.total), phase.total)}</p>
         <div className="progress">
           <div className="progress-bar" style={{ width: `${(phase.done / phase.total) * 100}%` }} />
         </div>
         <div className="modal-actions">
           <button className="btn" onClick={() => (cancelled.current = true)}>
-            Zastavit
+            {t.common.stop}
           </button>
         </div>
       </Modal>
@@ -143,17 +134,17 @@ export function ExportDialog({ engine, doc, fileName, defaultDir, currentPage, o
     const { count, target } = phase;
     return (
       <Modal
-        title="Export dokončen"
+        title={t.export.finishedTitle}
         onClose={onClose}
         footer={
           <>
             {target.reveal && (
               <button className="btn" onClick={target.reveal}>
-                <FolderOpen size={16} /> Otevřít složku
+                <FolderOpen size={16} /> {t.common.openFolder}
               </button>
             )}
             <button className="btn primary" onClick={onClose}>
-              Hotovo
+              {t.common.done}
             </button>
           </>
         }
@@ -161,7 +152,7 @@ export function ExportDialog({ engine, doc, fileName, defaultDir, currentPage, o
         <div className="export-done">
           <CheckCircle2 size={28} className="ok-icon" />
           <p>
-            {count === 1 ? "Uložen 1 obrázek" : count < 5 ? `Uloženy ${count} obrázky` : `Uloženo ${count} obrázků`}
+            {t.export.saved(count)}
             <br />
             <span className="muted">{target.label}</span>
           </p>
@@ -172,23 +163,23 @@ export function ExportDialog({ engine, doc, fileName, defaultDir, currentPage, o
 
   return (
     <Modal
-      title="Export do obrázků"
+      title={t.export.title}
       onClose={onClose}
       footer={
         <>
           <button className="btn" onClick={onClose}>
-            Zrušit
+            {t.common.cancel}
           </button>
           <button className="btn primary" disabled={!canExport} onClick={run}>
-            {isDesktop ? "Vybrat složku a exportovat" : "Exportovat"}
+            {isDesktop ? t.export.chooseAndExport : t.export.export}
           </button>
         </>
       }
     >
-      {phase.kind === "failed" && <div className="alert">Export selhal: {phase.message}</div>}
+      {phase.kind === "failed" && <div className="alert">{t.export.failed(phase.message)}</div>}
 
       <fieldset className="field">
-        <legend>Formát</legend>
+        <legend>{t.export.format}</legend>
         <div className="segmented">
           {FORMATS.map((f) => (
             <button
@@ -201,21 +192,21 @@ export function ExportDialog({ engine, doc, fileName, defaultDir, currentPage, o
             </button>
           ))}
         </div>
-        <p className="hint">{FORMATS.find((f) => f.id === settings.format)?.hint}</p>
+        <p className="hint">{t.export.formatHints[settings.format]}</p>
       </fieldset>
 
       <fieldset className="field">
-        <legend>Rozlišení (DPI)</legend>
+        <legend>{t.export.resolution}</legend>
         <div className="segmented">
-          {DPI_PRESETS.map((p) => (
+          {DPI_PRESETS.map((dpi) => (
             <button
-              key={p.dpi}
-              className={settings.dpi === p.dpi ? "active" : ""}
-              onClick={() => update({ dpi: p.dpi })}
-              aria-pressed={settings.dpi === p.dpi}
+              key={dpi}
+              className={settings.dpi === dpi ? "active" : ""}
+              onClick={() => update({ dpi })}
+              aria-pressed={settings.dpi === dpi}
             >
-              {p.label}
-              <small>{p.hint}</small>
+              {dpi}
+              <small>{t.export.dpiHints[dpi]}</small>
             </button>
           ))}
           <input
@@ -225,24 +216,27 @@ export function ExportDialog({ engine, doc, fileName, defaultDir, currentPage, o
             max={1200}
             value={settings.dpi}
             onChange={(e) => update({ dpi: parseInt(e.target.value, 10) || 0 })}
-            aria-label="Vlastní DPI"
+            aria-label={t.export.customDpi}
           />
         </div>
         <p className="hint">
           {dpiValid ? (
             <>
-              Výsledný obrázek: <strong>{pxW} × {pxH} px</strong>
-              {pages && pages.length > 1 ? " (první stránka)" : ""}
+              {t.export.resultSize}{" "}
+              <strong>
+                {pxW} × {pxH} px
+              </strong>
+              {pages && pages.length > 1 ? t.export.firstPage : ""}
             </>
           ) : (
-            "Zadejte DPI mezi 36 a 1200."
+            t.export.dpiInvalid
           )}
         </p>
       </fieldset>
 
       {settings.format !== "png" && (
         <fieldset className="field">
-          <legend>Kvalita</legend>
+          <legend>{t.export.quality}</legend>
           <div className="range-row">
             <input
               type="range"
@@ -250,43 +244,20 @@ export function ExportDialog({ engine, doc, fileName, defaultDir, currentPage, o
               max={100}
               value={settings.quality}
               onChange={(e) => update({ quality: parseInt(e.target.value, 10) })}
-              aria-label="Kvalita"
+              aria-label={t.export.quality}
             />
             <span className="range-value">{settings.quality}</span>
           </div>
         </fieldset>
       )}
 
-      {doc.pageCount > 1 && (
-        <fieldset className="field">
-          <legend>Stránky</legend>
-          <label className="radio">
-            <input type="radio" checked={scope === "all"} onChange={() => setScope("all")} />
-            Všechny ({doc.pageCount})
-          </label>
-          <label className="radio">
-            <input type="radio" checked={scope === "current"} onChange={() => setScope("current")} />
-            Aktuální ({currentPage + 1})
-          </label>
-          <label className="radio">
-            <input type="radio" checked={scope === "range"} onChange={() => setScope("range")} />
-            Rozsah
-            <input
-              className={scope === "range" && !pages ? "input invalid" : "input"}
-              value={rangeText}
-              onFocus={() => setScope("range")}
-              onChange={(e) => setRangeText(e.target.value)}
-              placeholder="např. 1-3, 5"
-            />
-          </label>
-        </fieldset>
-      )}
+      {doc.pageCount > 1 && <PageScopeField state={scope} pageCount={doc.pageCount} currentPage={currentPage} />}
 
       <fieldset className="field">
-        <legend>Názvy souborů</legend>
+        <legend>{t.export.fileNames}</legend>
         <label className="checkbox">
           <input type="checkbox" checked={settings.webNames} onChange={(e) => update({ webNames: e.target.checked })} />
-          Bez diakritiky a mezer (vhodné pro web)
+          {t.export.webNames}
         </label>
         <p className="hint mono">{pages?.length ? nameFor(pages[0]) : "–"}</p>
       </fieldset>

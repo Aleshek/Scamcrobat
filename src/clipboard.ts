@@ -1,10 +1,12 @@
-/** Zapíše text do schránky; když moderní API selže (chybí oprávnění), použije starší cestu přes textarea. */
+import { msg } from "./i18n";
+
+/** Writes text to the clipboard; when the modern API fails (no permission), falls back to a textarea. */
 export async function copyToClipboard(text: string): Promise<void> {
   try {
     await navigator.clipboard.writeText(text);
     return;
   } catch {
-    /* zkusíme záložní způsob */
+    /* try the fallback */
   }
   const active = document.activeElement as HTMLElement | null;
   const ta = document.createElement("textarea");
@@ -18,5 +20,5 @@ export async function copyToClipboard(text: string): Promise<void> {
   const ok = document.execCommand("copy");
   ta.remove();
   active?.focus({ preventScroll: true });
-  if (!ok) throw new Error("Schránka není dostupná");
+  if (!ok) throw new Error(msg().errors.clipboardUnavailable);
 }

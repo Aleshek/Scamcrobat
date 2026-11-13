@@ -2,6 +2,7 @@ import { memo, useEffect, useRef, useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { isAbortError, PRIORITY_THUMBNAIL, type PdfEngine } from "../engine/engine";
 import type { DocInfo, OutlineNode } from "../engine/types";
+import { useT } from "../i18n";
 
 const THUMB_WIDTH = 132;
 
@@ -13,6 +14,7 @@ interface Props {
 }
 
 export function Sidebar({ engine, doc, currentPage, onGoToPage }: Props) {
+  const t = useT();
   const hasOutline = doc.outline.length > 0;
   const [tab, setTab] = useState<"thumbs" | "outline">("thumbs");
   const activeTab = hasOutline ? tab : "thumbs";
@@ -27,7 +29,7 @@ export function Sidebar({ engine, doc, currentPage, onGoToPage }: Props) {
             className={activeTab === "thumbs" ? "active" : ""}
             onClick={() => setTab("thumbs")}
           >
-            Stránky
+            {t.sidebar.pages}
           </button>
           <button
             role="tab"
@@ -35,7 +37,7 @@ export function Sidebar({ engine, doc, currentPage, onGoToPage }: Props) {
             className={activeTab === "outline" ? "active" : ""}
             onClick={() => setTab("outline")}
           >
-            Záložky
+            {t.sidebar.bookmarks}
           </button>
         </div>
       )}
@@ -53,7 +55,7 @@ export function Sidebar({ engine, doc, currentPage, onGoToPage }: Props) {
 function Thumbnails({ engine, doc, currentPage, onGoToPage }: Props) {
   const listRef = useRef<HTMLDivElement>(null);
 
-  // Aktuální stránka má být v seznamu vidět.
+  // Keep the current page visible in the list.
   useEffect(() => {
     const el = listRef.current?.querySelector<HTMLElement>(`[data-thumb="${currentPage}"]`);
     el?.scrollIntoView({ block: "nearest" });
@@ -95,6 +97,7 @@ interface ThumbProps {
 
 const Thumb = memo(function Thumb(props: ThumbProps) {
   const { engine, docId, index, width, height, pageWidth } = props;
+  const t = useT();
   const ref = useRef<HTMLButtonElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [visible, setVisible] = useState(false);
@@ -136,7 +139,7 @@ const Thumb = memo(function Thumb(props: ThumbProps) {
       data-thumb={index}
       className={props.active ? "thumb active" : "thumb"}
       onClick={() => props.onClick(index)}
-      title={`Strana ${props.label}`}
+      title={t.common.pageN(props.label)}
     >
       <span className="thumb-frame" style={{ width, height }}>
         <canvas ref={canvasRef} style={{ width, height }} />
@@ -157,13 +160,14 @@ function OutlineList({ items, onGoToPage }: { items: OutlineNode[]; onGoToPage(i
 }
 
 function OutlineItem({ item, onGoToPage }: { item: OutlineNode; onGoToPage(i: number): void }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const hasChildren = item.children.length > 0;
   return (
     <li>
       <div className="outline-row">
         {hasChildren ? (
-          <button className="outline-toggle" onClick={() => setOpen(!open)} aria-label={open ? "Sbalit" : "Rozbalit"}>
+          <button className="outline-toggle" onClick={() => setOpen(!open)} aria-label={open ? t.sidebar.collapse : t.sidebar.expand}>
             {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
           </button>
         ) : (
@@ -175,7 +179,7 @@ function OutlineItem({ item, onGoToPage }: { item: OutlineNode; onGoToPage(i: nu
           onClick={() => item.page !== null && onGoToPage(item.page)}
           title={item.title}
         >
-          {item.title || "(bez názvu)"}
+          {item.title || t.sidebar.untitled}
         </button>
       </div>
       {open && hasChildren && <OutlineList items={item.children} onGoToPage={onGoToPage} />}

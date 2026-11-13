@@ -1,7 +1,8 @@
 /**
- * Rozdíly mezi desktopovou (Electron) a webovou verzí.
- * Desktop poskytuje `window.scamcrobat` z electron/preload.cjs.
+ * Differences between the desktop (Electron) and the web version.
+ * The desktop app provides `window.scamcrobat` from electron/preload.cjs.
  */
+import { msg } from "./i18n";
 
 export interface OpenedFile {
   name: string;
@@ -13,8 +14,8 @@ type BridgeFile = { name: string; path: string; data: Uint8Array };
 
 interface DesktopBridge {
   platform: string;
-  getInitialFile(): Promise<BridgeFile | null>;
-  openFileDialog(): Promise<BridgeFile | null>;
+  takePendingFiles(): Promise<BridgeFile[]>;
+  onFilesPending(callback: () => void): () => void;
   openFilesDialog(title?: string): Promise<BridgeFile[]>;
   openPath(path: string): Promise<BridgeFile | null>;
   saveFile(path: string, data: Uint8Array): Promise<string>;
@@ -24,6 +25,8 @@ interface DesktopBridge {
   writeFile(folder: string, name: string, data: Uint8Array): Promise<string>;
   showInFolder(path: string): Promise<void>;
   getPathForFile(file: File): string;
+  setLanguage(lang: string): void;
+  print(): Promise<void>;
 }
 
 declare global {
@@ -48,32 +51,31 @@ function toArrayBuffer(u8: Uint8Array): ArrayBuffer {
   return u8.slice().buffer as ArrayBuffer;
 }
 
-function fromBridge(f: BridgeFile | null): OpenedFile | null {
-  return f ? { name: f.name, path: f.path, data: toArrayBuffer(f.data) } : null;
+function fromBridge(f: BridgeFile): OpenedFile {
+  return { name: f.name, path: f.path, data: toArrayBuffer(f.data) };
 }
 
-export async function getInitialFile(): Promise<OpenedFile | null> {
-  return bridge ? fromBridge(await bridge.getInitialFile()) : null;
+/**
+ * Desktop: files the app was asked to open (double click on a PDF in Explorer, also while
+ * the app is already running). `onFiles` is called for the files waiting at startup and
+ * then whenever new ones arrive.
+ */
+export function watchIncomingFiles(onFiles: (files: OpenedFile[]) => void): () => void {
+  if (!bridge) return () => {};
+  const take = () => {
+    bridge
+      .takePendingFiles()
+      .then((files) => files.length && onFiles(files.map(fromBridge)))
+      .catch((e) => console.error(e));
+  };
+  const unsubscribe = bridge.onFilesPending(take);
+  take();
+  return unsubscribe;
 }
 
-export async function openFileDialog(): Promise<OpenedFile | null> {
-  if (bridge) return fromBridge(await bridge.openFileDialog());
-  return new Promise((resolve) => {
-    const input = document.createElement("input");
-    input.type = "file";
-    input.accept = "application/pdf,.pdf";
-    input.onchange = async () => {
-      const file = input.files?.[0];
-      resolve(file ? await fileFromDrop(file) : null);
-    };
-    input.oncancel = () => resolve(null);
-    input.click();
-  });
-}
-
-/** Výběr více PDF najednou (slučování, vkládání stránek). */
+/** Lets the user pick one or more PDF files. */
 export async function openFilesDialog(title?: string): Promise<OpenedFile[]> {
-  if (bridge) return (await bridge.openFilesDialog(title)).map((f) => fromBridge(f)!);
+  if (bridge) return (await bridge.openFilesDialog(title)).map(fromBridge);
   return new Promise((resolve) => {
     const input = document.createElement("input");
     input.type = "file";
@@ -92,26 +94,26 @@ export async function fileFromDrop(file: File): Promise<OpenedFile> {
   } catch {
     path = undefined;
   }
-  // Na desktopu soubor načte hlavní proces – pak ho jde i uložit zpět na stejné místo.
-  if (bridge && path && /\.pdf$/i.test(path)) {
-    const opened = fromBridge(await bridge.openPath(path));
-    if (opened) return opened;
+  // On the desktop the main process reads the file – then it can also be saved back in place.
+  if (bridge && path && isPdfName(path)) {
+    const opened = await bridge.openPath(path);
+    if (opened) return fromBridge(opened);
   }
   return { name: file.name, path, data: await file.arrayBuffer() };
 }
 
 export const isPdfName = (name: string) => /\.pdf$/i.test(name);
 
-/** Přepíše existující soubor (jen desktop, jen soubor, který uživatel otevřel nebo uložil). */
+/** Overwrites an existing file (desktop only, only a file the user opened or saved). */
 export async function savePdf(path: string, data: Uint8Array): Promise<void> {
-  if (!bridge) throw new Error("Ukládání na místo je dostupné jen v desktopové aplikaci");
+  if (!bridge) throw new Error(msg().errors.saveInPlaceDesktopOnly);
   await bridge.saveFile(path, data);
 }
 
 /**
- * Uloží PDF pod novým názvem: na desktopu přes systémový dialog, v prohlížeči
- * přes výběr souboru (Chrome, Edge) nebo jako stažený soubor.
- * Vrací null, pokud uživatel ukládání zrušil.
+ * Saves a PDF under a new name: on the desktop through the system dialog, in the browser
+ * through the file picker (Chrome, Edge) or as a download.
+ * Returns null when the user cancels.
  */
 export async function savePdfAs(
   data: Uint8Array,
@@ -128,7 +130,7 @@ export async function savePdfAs(
       handle = await window.showSaveFilePicker({
         suggestedName,
         id: "scamcrobat-save",
-        types: [{ description: "PDF dokument", accept: { "application/pdf": [".pdf"] } }],
+        types: [{ description: msg().common.pdfDocument, accept: { "application/pdf": [".pdf"] } }],
       });
     } catch (e) {
       if (e instanceof DOMException && e.name === "AbortError") return null;
@@ -152,9 +154,15 @@ function download(name: string, data: Uint8Array) {
   setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }
 
-/** Desktop: hlavní proces žádá o uložení před zavřením okna. */
+/** Desktop: the main process asks to save before the window closes. */
 export function onSaveAndClose(callback: () => void): () => void {
   return bridge ? bridge.onSaveAndClose(callback) : () => {};
+}
+
+/** Opens the system print dialog for the current page content (see print/print.ts). */
+export async function printWindow(): Promise<void> {
+  if (bridge) return bridge.print();
+  window.print();
 }
 
 export function basename(path: string): string {
@@ -166,12 +174,17 @@ export function dirname(path: string): string {
   return i > 0 ? path.slice(0, i) : path;
 }
 
-/** Cíl exportu – složka na disku (desktop), složka vybraná v prohlížeči, nebo stahování. */
+/** Same file? Windows paths are case insensitive. */
+export function samePath(a?: string, b?: string): boolean {
+  return !!a && !!b && a.replace(/\//g, "\\").toLowerCase() === b.replace(/\//g, "\\").toLowerCase();
+}
+
+/** Where exported files go – a folder on disk (desktop), a folder picked in the browser, or downloads. */
 export interface ExportTarget {
-  /** Popis pro uživatele, např. cesta ke složce */
+  /** Description for the user, e.g. the folder path */
   label: string;
   write(name: string, data: Uint8Array): Promise<void>;
-  /** Na desktopu otevře složku v Průzkumníkovi */
+  /** Desktop: shows the folder in Explorer */
   reveal?: () => void;
 }
 
@@ -211,10 +224,10 @@ export async function chooseExportTarget(suggestedDir?: string): Promise<ExportT
   }
 
   return {
-    label: "Stažené soubory",
+    label: msg().common.downloads,
     async write(name, data) {
       download(name, data);
-      // Prohlížeče blokují rychlé hromadné stahování, proto malá pauza.
+      // Browsers block rapid bulk downloads, hence a short pause.
       await new Promise((r) => setTimeout(r, 250));
     },
   };

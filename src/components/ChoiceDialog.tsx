@@ -10,7 +10,7 @@ export interface ChoiceOption {
 export interface ChoiceRequest {
   title: string;
   message: ReactNode;
-  /** Tlačítka zleva doprava; zavření dialogu vrací "cancel". */
+  /** Buttons from left to right; closing the dialog returns "cancel". */
   options: ChoiceOption[];
 }
 

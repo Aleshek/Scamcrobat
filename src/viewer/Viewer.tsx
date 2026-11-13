@@ -23,6 +23,8 @@ interface Props {
   ref?: Ref<ViewerHandle>;
   engine: PdfEngine;
   doc: DocInfo;
+  /** Inactive tab: keeps its scroll position but releases rendered pages. */
+  active?: boolean;
   scale: number;
   hits: SearchHit[];
   activeHit: number;
@@ -33,7 +35,7 @@ interface Props {
   onZoom(scale: number): void;
 }
 
-/** Která část výšky okna určuje „aktuální“ stránku. */
+/** Which part of the window height determines the "current" page. */
 const CURRENT_PAGE_LINE = 0.4;
 
 export function Viewer(props: Props) {
@@ -55,7 +57,7 @@ export function Viewer(props: Props) {
   const layoutRef = useRef(layout);
   layoutRef.current = layout;
 
-  // Velikost okna prohlížeče (kvůli „přizpůsobit šířce“ a virtualizaci).
+  // Size of the viewer (for "fit width" and virtualization).
   useLayoutEffect(() => {
     const el = containerRef.current!;
     const ro = new ResizeObserver(() => {
@@ -66,7 +68,7 @@ export function Viewer(props: Props) {
     return () => ro.disconnect();
   }, [onViewport]);
 
-  // Po změně zoomu udržíme na místě bod pod kurzorem (nebo střed okna).
+  // After a zoom change keep the point under the cursor (or the window center) in place.
   useLayoutEffect(() => {
     const el = containerRef.current!;
     const prev = prevLayout.current;
@@ -82,7 +84,7 @@ export function Viewer(props: Props) {
     }
     const old = prev.layout;
     if (old.scale === layout.scale || !old.tops.length) return;
-    // Na začátku dokumentu (např. hned po otevření) zůstáváme nahoře, pokud nejde o zoom kolečkem.
+    // At the start of the document (e.g. right after opening) stay at the top, unless zooming with the wheel.
     if (!anchorRef.current && lastScroll.current.top === 0) {
       el.scrollLeft = Math.max(0, (layout.contentWidth - el.clientWidth) / 2);
       lastScroll.current = { top: 0, left: el.scrollLeft };
@@ -103,7 +105,7 @@ export function Viewer(props: Props) {
     setScroll(lastScroll.current);
   }, [layout, doc.docId]);
 
-  // Posouvání: rAF, aby se React nepřekresloval častěji než obrazovka.
+  // Scrolling: rAF so that React does not re-render more often than the screen refreshes.
   useEffect(() => {
     const el = containerRef.current!;
     let frame = 0;
@@ -123,7 +125,7 @@ export function Viewer(props: Props) {
     };
   }, []);
 
-  // Ctrl + kolečko (a gesto sevření na touchpadu) = zoom kolem kurzoru.
+  // Ctrl + wheel (and the touchpad pinch gesture) = zoom around the cursor.
   useEffect(() => {
     const el = containerRef.current!;
     const onWheel = (e: WheelEvent) => {
@@ -140,8 +142,8 @@ export function Viewer(props: Props) {
     return () => el.removeEventListener("wheel", onWheel);
   }, [onZoom]);
 
-  // Aktuální stránka = ta, přes kterou vede linka ve 40 % výšky okna.
-  // Čteme skutečnou pozici z DOM (po změně zoomu může být stav o snímek pozadu).
+  // Current page = the one crossed by a line at 40 % of the window height.
+  // Reads the real position from the DOM (after a zoom change the state may be a frame behind).
   const lastReportedPage = useRef(-1);
   useEffect(() => {
     const el = containerRef.current;
@@ -184,7 +186,7 @@ export function Viewer(props: Props) {
     [doc.pages],
   );
 
-  // Výběr textu tažením myši (v rámci jedné stránky).
+  // Text selection by dragging the mouse (within one page).
   const selectionGen = useRef(0);
   const onPageMouseDown = useCallback(
     (e: React.MouseEvent<HTMLDivElement>, index: number) => {
@@ -251,7 +253,7 @@ export function Viewer(props: Props) {
     [doc, engine, onSelection],
   );
 
-  // Výsledky hledání seskupené podle stránek.
+  // Search results grouped by page.
   const hitsByPage = useMemo(() => {
     const map = new Map<number, Quad[][]>();
     for (const h of hits) {
@@ -263,9 +265,10 @@ export function Viewer(props: Props) {
   }, [hits]);
   const active = hits[activeHit];
 
-  // Vykreslujeme jen stránky v okně a kousek okolo (virtualizace).
+  // Only pages in the window and a bit around it are rendered (virtualization).
   const vh = viewport.height || 800;
-  const [first, last] = visibleRange(layout, scroll.top - vh, scroll.top + 2 * vh);
+  const [first, last] =
+    props.active === false ? [0, -1] : visibleRange(layout, scroll.top - vh, scroll.top + 2 * vh);
   const pages = [];
   for (let i = first; i <= last; i++) {
     const inView = layout.tops[i] < scroll.top + vh && layout.tops[i] + layout.heights[i] > scroll.top;

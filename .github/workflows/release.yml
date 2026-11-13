@@ -1,12 +1,12 @@
-# Vydání nové verze: po pushnutí tagu (např. v0.3.0) GitHub sestaví instalátor pro Windows
-# a připojí ho k nové Release. Verze v tagu musí odpovídat verzi v package.json.
+# Releasing a new version: after a tag (e.g. v0.3.0) is pushed, GitHub builds the Windows
+# installer and attaches it to a new Release. The tag must match the version in package.json.
 #
-#   git tag v0.3.0
+#   git tag -a v0.3.0 -m "Scamcrobat 0.3.0"
 #   git push origin v0.3.0
 #
-# Ruční spuštění (Actions → Vydání → Run workflow) jen sestaví zkušební instalátor
-# a nabídne ho ke stažení u běhu workflow – žádná Release nevznikne.
-name: Vydání
+# Running it by hand (Actions → Release → Run workflow) only builds a test installer
+# and offers it for download on the workflow run – no Release is created.
+name: Release
 
 on:
   push:
@@ -17,12 +17,12 @@ permissions:
   contents: write
 
 env:
-  # Binárku Electronu z npm nepotřebujeme – electron-builder si stahuje vlastní.
+  # The Electron binary from npm is not needed – electron-builder downloads its own.
   ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
 
 jobs:
   windows:
-    name: Instalátor pro Windows
+    name: Windows installer
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v5
@@ -31,22 +31,22 @@ jobs:
           node-version: 26
           cache: npm
 
-      - name: Kontrola verze
+      - name: Check the version
         if: startsWith(github.ref, 'refs/tags/')
         shell: bash
         run: |
           version=$(node -p "require('./package.json').version")
           if [ "v$version" != "$GITHUB_REF_NAME" ]; then
-            echo "::error::Tag $GITHUB_REF_NAME neodpovídá verzi v package.json ($version)"
+            echo "::error::Tag $GITHUB_REF_NAME does not match the version in package.json ($version)"
             exit 1
           fi
 
       - run: npm ci
       - run: npm run build
-      - name: Sestavení instalátoru
+      - name: Build the installer
         run: npx electron-builder --win --publish never
 
-      - name: Vytvoření Release
+      - name: Create the Release
         if: startsWith(github.ref, 'refs/tags/')
         shell: bash
         env:
@@ -56,7 +56,7 @@ jobs:
             --title "Scamcrobat ${GITHUB_REF_NAME#v}" \
             --generate-notes
 
-      - name: Zkušební instalátor ke stažení
+      - name: Test installer for download
         if: "!startsWith(github.ref, 'refs/tags/')"
         uses: actions/upload-artifact@v4
         with:

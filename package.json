@@ -1,8 +1,8 @@
 {
   "name": "scamcrobat",
   "productName": "Scamcrobat",
-  "version": "0.2.0",
-  "description": "Open source prohlížeč PDF a nástroje pro práci s PDF",
+  "version": "0.3.0",
+  "description": "Free and open source PDF viewer and page editor",
   "license": "AGPL-3.0-or-later",
   "author": "Scamcrobat contributors",
   "homepage": "https://github.com/Aleshek/Scamcrobat",
@@ -53,7 +53,7 @@
       {
         "ext": "pdf",
         "name": "PDF",
-        "description": "PDF dokument",
+        "description": "PDF Document",
         "mimeType": "application/pdf",
         "role": "Viewer",
         "icon": "build/file-pdf.ico"
@@ -71,6 +71,11 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "shortcutName": "Scamcrobat",
+      "multiLanguageInstaller": true,
+      "installerLanguages": [
+        "en_US",
+        "cs_CZ"
+      ],
       "artifactName": "Scamcrobat-Setup-${version}.${ext}"
     }
   }

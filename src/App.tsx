@@ -1,43 +1,44 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Combine, FileUp, FolderOpen, LoaderCircle, Lock } from "lucide-react";
+import { FileUp, LoaderCircle } from "lucide-react";
 import { PdfEngine } from "./engine/engine";
-import { EngineError, type DocInfo, type SearchHit, type TextSelection } from "./engine/types";
-import { Toolbar } from "./components/Toolbar";
-import { Sidebar } from "./components/Sidebar";
-import { Modal } from "./components/Modal";
+import { EngineError, type DocInfo } from "./engine/types";
+import { TabBar } from "./components/TabBar";
 import { ChoiceDialog, type ChoiceRequest } from "./components/ChoiceDialog";
-import { ExportDialog } from "./export/ExportDialog";
+import { PasswordDialog } from "./components/PasswordDialog";
 import { Organizer, type OrganizeResult, type OrganizerHandle } from "./organize/Organizer";
 import { pagesFromDoc, type OrgPage, type OrgSource } from "./organize/model";
-import { Viewer, type ViewerHandle } from "./viewer/Viewer";
-import { clampScale, CSS_PX_PER_PT_AT_100, fitScale, nextZoomStep, percentToScale } from "./viewer/layout";
+import { DocView } from "./DocView";
+import { StartView } from "./StartView";
+import {
+  cycleTab,
+  createTab,
+  placeDoc,
+  removeTab,
+  setTabDoc,
+  startTab,
+  type OpenDoc,
+  type TabsState,
+} from "./tabs";
 import {
   dirname,
   fileFromDrop,
-  getInitialFile,
-  isDesktop,
+  isPdfName,
   onSaveAndClose,
-  openFileDialog,
   openFilesDialog,
+  samePath,
   savePdf,
   savePdfAs,
+  isDesktop,
+  watchIncomingFiles,
   type OpenedFile,
 } from "./platform";
-import { copyToClipboard } from "./clipboard";
-
-interface OpenDoc {
-  info: DocInfo;
-  name: string;
-  /** Cesta k souboru na disku (jen desktop) – kam se ukládá */
-  path?: string;
-  /** Výchozí složka pro dialogy Uložit jako / Export */
-  dir?: string;
-  /** Dokument má neuložené změny */
-  dirty: boolean;
-}
+import { errorText } from "./errors";
+import { useT } from "./i18n";
 
 interface OrganizeSession {
   id: number;
+  /** Tab whose document is being organized; null = a new document (merge) */
+  tabId: number | null;
   sources: OrgSource[];
   pages: OrgPage[];
   isNew: boolean;
@@ -46,20 +47,8 @@ interface OrganizeSession {
   baseDir?: string;
 }
 
-type FitMode = "width" | "page" | null;
-
-interface SearchState {
-  query: string;
-  hits: SearchHit[];
-  active: number;
-  done: boolean;
-  busy: boolean;
-}
-
-const NO_SEARCH: SearchState = { query: "", hits: [], active: 0, done: false, busy: false };
 const SIDEBAR_KEY = "scamcrobat.sidebar";
 const stem = (name: string) => name.replace(/\.pdf$/i, "");
-const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 function readSidebarPref() {
   try {
@@ -69,18 +58,33 @@ function readSidebarPref() {
   }
 }
 
-// Jedno PDF jádro (Web Worker) pro celé okno.
+// One PDF engine (Web Worker) for the whole window.
 let sharedEngine: PdfEngine | null = null;
 const getEngine = () => (sharedEngine ??= new PdfEngine());
 
+const initialTabs = (): TabsState => {
+  const first = createTab();
+  return { tabs: [first], activeId: first.id };
+};
+
 export function App() {
+  const t = useT();
   const [engine] = useState(getEngine);
   if (import.meta.env.DEV) (window as unknown as { __engine: PdfEngine }).__engine = engine;
-  const viewerRef = useRef<ViewerHandle>(null);
-  const searchRef = useRef<HTMLInputElement>(null);
   const organizerRef = useRef<OrganizerHandle>(null);
 
-  const [doc, setDoc] = useState<OpenDoc | null>(null);
+  const [tabsState, setTabsState] = useState<TabsState>(initialTabs);
+  /** Always the latest tabs, also inside async flows (updated together with the state). */
+  const tabsRef = useRef(tabsState);
+  const commit = useCallback((update: (s: TabsState) => TabsState) => {
+    const next = update(tabsRef.current);
+    if (next === tabsRef.current) return;
+    tabsRef.current = next;
+    setTabsState(next);
+  }, []);
+  const { tabs, activeId } = tabsState;
+  const activeTab = tabs.find((x) => x.id === activeId) ?? tabs[0];
+
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -91,28 +95,17 @@ export function App() {
     resolve(value: string | null): void;
   } | null>(null);
   const [choice, setChoice] = useState<(ChoiceRequest & { resolve(value: string): void }) | null>(null);
-  const [fit, setFit] = useState<FitMode>("width");
-  const [scale, setScale] = useState(CSS_PX_PER_PT_AT_100);
-  const [viewport, setViewport] = useState({ width: 0, height: 0 });
-  const [currentPage, setCurrentPage] = useState(0);
   const [sidebarOpen, setSidebarOpen] = useState(readSidebarPref);
-  const [search, setSearch] = useState<SearchState>(NO_SEARCH);
-  const [selection, setSelection] = useState<TextSelection | null>(null);
-  const [exportOpen, setExportOpen] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [organize, setOrganize] = useState<OrganizeSession | null>(null);
   const [organizeDirty, setOrganizeDirty] = useState(false);
 
-  const docRef = useRef(doc);
-  docRef.current = doc;
   const organizeRef = useRef(organize);
   organizeRef.current = organize;
-  const currentPageRef = useRef(currentPage);
-  currentPageRef.current = currentPage;
-  /** Po uložení při zavírání okna už beforeunload nesmí zavření blokovat. */
+  /** After saving while the window closes, beforeunload must no longer block closing. */
   const allowClose = useRef(false);
 
-  // ---------- Dialogy jako sliby ----------
+  // ---------- Dialogs as promises ----------
 
   const ask = useCallback(
     (request: ChoiceRequest) => new Promise<string>((resolve) => setChoice({ ...request, resolve })),
@@ -125,15 +118,17 @@ export function App() {
     [],
   );
 
-  // ---------- Otevírání dokumentů ----------
+  const activate = useCallback((id: number) => commit((s) => (s.activeId === id ? s : { ...s, activeId: id })), [commit]);
 
-  /** Otevře soubor v jádře; u zaheslovaných se ptá na heslo. Vrací null, když uživatel zruší. */
+  // ---------- Opening documents ----------
+
+  /** Opens a file in the engine; asks for a password when needed. Returns null when the user cancels. */
   const openInEngine = useCallback(
     async (file: OpenedFile): Promise<DocInfo | null> => {
       let password: string | undefined;
       for (;;) {
         try {
-          // Kopie dat: originál si necháváme pro případný další pokus s heslem.
+          // A copy of the data: the original is kept for another attempt with a password.
           return await engine.open(file.data.slice(0), file.name, password);
         } catch (e) {
           if (e instanceof EngineError && (e.code === "PASSWORD_REQUIRED" || e.code === "PASSWORD_WRONG")) {
@@ -149,113 +144,122 @@ export function App() {
     [engine, askPassword],
   );
 
-  const showDoc = useCallback((d: OpenDoc) => {
-    setDoc(d);
-    setCurrentPage(0);
-    setSearch(NO_SEARCH);
-    setSelection(null);
-    setExportOpen(false);
-    setFit("width");
-    requestAnimationFrame(() => viewerRef.current?.focus());
-  }, []);
+  /** Opens files, each in its own tab (an already open file just gets activated). */
+  const openFiles = useCallback(
+    async (files: OpenedFile[]) => {
+      if (!files.length) return;
+      setLoading(true);
+      setError(null);
+      try {
+        for (const file of files) {
+          const existing = file.path && tabsRef.current.tabs.find((x) => samePath(x.doc?.path, file.path));
+          if (existing) {
+            activate(existing.id);
+            continue;
+          }
+          try {
+            const info = await openInEngine(file);
+            if (!info) continue;
+            const doc: OpenDoc = {
+              info,
+              name: file.name,
+              path: file.path,
+              dir: file.path ? dirname(file.path) : undefined,
+              dirty: false,
+            };
+            commit((s) => placeDoc(s, doc)[0]);
+          } catch (e) {
+            setError(t.app.openFailed(file.name, errorText(e)));
+          }
+        }
+      } finally {
+        setLoading(false);
+      }
+    },
+    [openInEngine, activate, commit, t],
+  );
+  const openFilesRef = useRef(openFiles);
+  openFilesRef.current = openFiles;
 
-  // ---------- Ukládání ----------
+  const openDialog = useCallback(async () => {
+    try {
+      await openFiles(await openFilesDialog());
+    } catch (e) {
+      setError(errorText(e));
+    }
+  }, [openFiles]);
+
+  // Desktop: files from Explorer (at startup and while running).
+  useEffect(() => watchIncomingFiles((files) => void openFilesRef.current(files)), []);
+
+  // ---------- Saving and closing ----------
 
   const saveDoc = useCallback(
-    async (asNew: boolean, target?: OpenDoc): Promise<boolean> => {
-      const d = target ?? docRef.current;
+    async (tabId: number, asNew: boolean): Promise<boolean> => {
+      const d = tabsRef.current.tabs.find((x) => x.id === tabId)?.doc;
       if (!d) return false;
       try {
         const data = await engine.getBytes(d.info.docId);
         let { name, path } = d;
         if (!asNew && path && isDesktop) {
-          setBusy("Ukládám…");
+          setBusy(t.app.saving);
           await savePdf(path, data);
         } else {
-          const suggested = /\.pdf$/i.test(name) ? name : `${name}.pdf`;
+          const suggested = isPdfName(name) ? name : `${name}.pdf`;
           const saved = await savePdfAs(data, suggested, d.dir);
           if (!saved) return false;
           name = saved.name;
           path = saved.path;
         }
-        setDoc((cur) =>
-          cur && cur.info.docId === d.info.docId
-            ? { ...cur, name, path, dir: path ? dirname(path) : cur.dir, dirty: false }
-            : cur,
+        commit((s) =>
+          setTabDoc(s, tabId, (cur) =>
+            cur.info.docId === d.info.docId
+              ? { ...cur, name, path, dir: path ? dirname(path) : cur.dir, dirty: false }
+              : cur,
+          ),
         );
-        setToast(`Uloženo – ${name}`);
+        setToast(t.app.saved(name));
         return true;
       } catch (e) {
-        setError(`Uložení se nepovedlo: ${errorText(e)}`);
+        setError(t.app.saveFailed(errorText(e)));
         return false;
       } finally {
         setBusy(null);
       }
     },
-    [engine],
+    [engine, commit, t],
   );
 
-  /** Před zahozením dokumentu s neuloženými změnami se zeptá. Vrací true = pokračovat. */
-  const confirmDiscard = useCallback(async (): Promise<boolean> => {
-    const d = docRef.current;
-    if (!d?.dirty) return true;
-    const answer = await ask({
-      title: "Neuložené změny",
-      message: (
-        <p>
-          Dokument <strong>{d.name}</strong> má neuložené změny. Chcete je uložit?
-        </p>
-      ),
-      options: [
-        { value: "cancel", label: "Zrušit" },
-        { value: "discard", label: "Neukládat" },
-        { value: "save", label: "Uložit", kind: "primary" },
-      ],
-    });
-    if (answer === "save") return saveDoc(false);
-    return answer === "discard";
-  }, [ask, saveDoc]);
-
-  const openFile = useCallback(
-    async (file: OpenedFile, skipConfirm = false) => {
-      if (!skipConfirm && !(await confirmDiscard())) return;
-      setLoading(true);
-      setError(null);
-      try {
-        const info = await openInEngine(file);
-        if (!info) return;
-        const old = docRef.current;
-        if (old) void engine.close(old.info.docId);
-        showDoc({ info, name: file.name, path: file.path, dir: file.path ? dirname(file.path) : undefined, dirty: false });
-      } catch (e) {
-        setError(`Soubor „${file.name}“ se nepodařilo otevřít: ${errorText(e)}`);
-      } finally {
-        setLoading(false);
+  const closeTab = useCallback(
+    async (id: number) => {
+      if (organizeRef.current) return;
+      const s = tabsRef.current;
+      const tab = s.tabs.find((x) => x.id === id);
+      if (!tab || (!tab.doc && s.tabs.length === 1)) return;
+      if (tab.doc?.dirty) {
+        activate(id);
+        const answer = await ask({
+          title: t.app.unsavedTitle,
+          message: <p>{t.app.unsavedMessage(<strong>{tab.doc.name}</strong>)}</p>,
+          options: [
+            { value: "cancel", label: t.common.cancel },
+            { value: "discard", label: t.common.dontSave },
+            { value: "save", label: t.common.save, kind: "primary" },
+          ],
+        });
+        if (answer === "cancel") return;
+        if (answer === "save" && !(await saveDoc(id, false))) return;
       }
+      const doc = tabsRef.current.tabs.find((x) => x.id === id)?.doc;
+      if (doc) void engine.close(doc.info.docId);
+      commit((cur) => removeTab(cur, id));
     },
-    [engine, openInEngine, confirmDiscard, showDoc],
+    [engine, ask, activate, saveDoc, commit, t],
   );
 
-  const openDialog = useCallback(async () => {
-    try {
-      if (!(await confirmDiscard())) return;
-      const file = await openFileDialog();
-      if (file) await openFile(file, true);
-    } catch (e) {
-      setError(errorText(e));
-    }
-  }, [openFile, confirmDiscard]);
+  // ---------- Organizing pages ----------
 
-  // Soubor předaný při spuštění (dvojklik na PDF ve Windows).
-  useEffect(() => {
-    getInitialFile()
-      .then((f) => f && openFile(f, true))
-      .catch((e) => setError(String(e)));
-  }, [openFile]);
-
-  // ---------- Uspořádání stránek ----------
-
-  /** Otevře soubory jako zdroje stránek pro organizér. Chyby hlásí, nepovedené soubory přeskočí. */
+  /** Opens files as page sources for the organizer. Reports errors and skips failed files. */
   const openSources = useCallback(
     async (files: OpenedFile[]) => {
       const opened: { info: DocInfo; file: OpenedFile }[] = [];
@@ -266,27 +270,27 @@ export function App() {
           if (!info) continue;
           if (!info.isPdf) {
             void engine.close(info.docId);
-            failed.push(`„${file.name}“ není PDF`);
+            failed.push(t.app.notPdf(file.name));
             continue;
           }
           opened.push({ info, file });
         } catch (e) {
-          failed.push(`„${file.name}“: ${errorText(e)}`);
+          failed.push(`${file.name}: ${errorText(e)}`);
         }
       }
-      if (failed.length) setError(`Některé soubory nešlo načíst – ${failed.join("; ")}`);
+      if (failed.length) setError(t.app.someFailed(failed.join("; ")));
       return opened;
     },
-    [engine, openInEngine],
+    [engine, openInEngine, t],
   );
 
   const startOrganize = useCallback(() => {
-    const d = docRef.current;
-    if (!d?.info.isPdf) return;
-    setSelection(null);
-    setExportOpen(false);
+    const tab = tabsRef.current.tabs.find((x) => x.id === tabsRef.current.activeId);
+    const d = tab?.doc;
+    if (!tab || !d?.info.isPdf) return;
     setOrganize({
       id: Date.now(),
+      tabId: tab.id,
       sources: [{ docId: d.info.docId, name: d.name, path: d.path, owned: false }],
       pages: pagesFromDoc(d.info),
       isNew: false,
@@ -298,7 +302,7 @@ export function App() {
 
   const startMerge = useCallback(async () => {
     try {
-      const files = await openFilesDialog("Vyberte PDF soubory ke sloučení");
+      const files = await openFilesDialog(t.app.mergeDialogTitle);
       if (!files.length) return;
       setLoading(true);
       const opened = await openSources(files);
@@ -307,85 +311,97 @@ export function App() {
       const firstPath = opened.find((o) => o.file.path)?.file.path;
       setOrganize({
         id: Date.now(),
+        tabId: null,
         sources: opened.map(({ info, file }) => ({ docId: info.docId, name: file.name, path: file.path, owned: true })),
         pages: opened.flatMap((o) => pagesFromDoc(o.info)),
         isNew: true,
-        title: "Sloučení PDF",
-        baseName: opened.length === 1 ? stem(opened[0].file.name) : "Sloučený dokument",
+        title: t.app.mergeTitle,
+        baseName: opened.length === 1 ? stem(opened[0].file.name) : t.app.mergedName,
         baseDir: firstPath ? dirname(firstPath) : undefined,
       });
     } catch (e) {
       setLoading(false);
       setError(errorText(e));
     }
-  }, [openSources]);
+  }, [openSources, t]);
 
   const endOrganize = useCallback(
     (owned: number[]) => {
       for (const id of owned) void engine.close(id);
       setOrganize(null);
       setOrganizeDirty(false);
-      requestAnimationFrame(() => viewerRef.current?.focus());
     },
     [engine],
   );
 
-  /** Použije změny z organizéru: sestaví nové PDF a zobrazí ho. Vrací true při úspěchu. */
+  /** Applies the organizer's changes: builds the new PDF and shows it. Returns true on success. */
   const applyOrganize = useCallback(
     async (result: OrganizeResult, opts: { save?: boolean } = {}): Promise<boolean> => {
       const session = organizeRef.current;
       if (!session) return false;
-      const old = docRef.current;
+      const tab = session.tabId !== null ? tabsRef.current.tabs.find((x) => x.id === session.tabId) : undefined;
+      const old = tab?.doc ?? null;
       if (!result.changed) {
         endOrganize(result.owned);
-        return opts.save && old?.dirty ? saveDoc(false, old) : true;
+        return opts.save && tab && old?.dirty ? saveDoc(tab.id, false) : true;
       }
-      setBusy("Sestavuji dokument…");
-      let next: OpenDoc;
+      setBusy(t.app.composing);
+      let targetId: number;
       try {
         const info = await engine.compose(result.pages, result.base);
-        if (old) void engine.close(old.info.docId);
-        next = {
+        const next: OpenDoc = {
           info,
           name: old ? old.name : `${session.baseName}.pdf`,
           path: old?.path,
           dir: old?.dir ?? session.baseDir,
           dirty: true,
         };
+        if (tab && old) {
+          void engine.close(old.info.docId);
+          commit((s) => setTabDoc(s, tab.id, () => next));
+          targetId = tab.id;
+        } else {
+          let id = 0;
+          commit((s) => {
+            const [placed, placedId] = placeDoc(s, next);
+            id = placedId;
+            return placed;
+          });
+          targetId = id;
+        }
         endOrganize(result.owned);
-        showDoc(next);
       } catch (e) {
-        setError(`Úpravy se nepodařilo použít: ${errorText(e)}`);
+        setError(t.app.applyFailed(errorText(e)));
         return false;
       } finally {
         setBusy(null);
       }
-      return opts.save ? saveDoc(false, next) : true;
+      return opts.save ? saveDoc(targetId, false) : true;
     },
-    [engine, endOrganize, showDoc, saveDoc],
+    [engine, endOrganize, saveDoc, commit, t],
   );
 
   const cancelOrganize = useCallback(
     async (result: OrganizeResult) => {
       if (result.changed) {
         const answer = await ask({
-          title: "Zahodit úpravy?",
-          message: <p>Změny v uspořádání stránek se neuloží.</p>,
+          title: t.app.discardTitle,
+          message: <p>{t.app.discardMessage}</p>,
           options: [
-            { value: "cancel", label: "Pokračovat v úpravách" },
-            { value: "discard", label: "Zahodit", kind: "danger" },
+            { value: "cancel", label: t.app.keepEditing },
+            { value: "discard", label: t.app.discard, kind: "danger" },
           ],
         });
         if (answer !== "discard") return;
       }
       endOrganize(result.owned);
     },
-    [ask, endOrganize],
+    [ask, endOrganize, t],
   );
 
-  // ---------- Neuložené změny při zavírání okna ----------
+  // ---------- Unsaved changes when the window closes ----------
 
-  const hasUnsaved = !!doc?.dirty || (!!organize && organizeDirty);
+  const hasUnsaved = tabs.some((x) => x.doc?.dirty) || (!!organize && organizeDirty);
   useEffect(() => {
     if (!hasUnsaved) return;
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
@@ -397,26 +413,30 @@ export function App() {
     return () => window.removeEventListener("beforeunload", onBeforeUnload);
   }, [hasUnsaved]);
 
-  // Desktop: uživatel v dialogu při zavírání okna zvolil „Uložit“.
+  // Desktop: the user chose "Save" in the dialog shown when closing the window.
   useEffect(
     () =>
       onSaveAndClose(async () => {
         const result = organizeRef.current ? organizerRef.current?.result() : null;
-        const ok = result ? await applyOrganize(result, { save: true }) : await saveDoc(false);
-        if (ok) {
-          allowClose.current = true;
-          window.close();
+        if (result && !(await applyOrganize(result, { save: true }))) return;
+        for (const tab of tabsRef.current.tabs) {
+          if (!tab.doc?.dirty) continue;
+          activate(tab.id);
+          if (!(await saveDoc(tab.id, false))) return;
         }
+        allowClose.current = true;
+        window.close();
       }),
-    [applyOrganize, saveDoc],
+    [applyOrganize, saveDoc, activate],
   );
 
   useEffect(() => {
-    if (organize) document.title = `Uspořádat stránky – ${organize.title} – Scamcrobat`;
+    const doc = activeTab.doc;
+    if (organize) document.title = `${t.app.organizeWindowTitle(organize.title)} – Scamcrobat`;
     else document.title = doc ? `${doc.dirty ? "• " : ""}${doc.name} – Scamcrobat` : "Scamcrobat";
-  }, [doc, organize]);
+  }, [activeTab, organize, t]);
 
-  // ---------- Přetažení souboru do okna ----------
+  // ---------- Dropping files into the window ----------
 
   useEffect(() => {
     let depth = 0;
@@ -425,7 +445,7 @@ export function App() {
       if (!hasFiles(e)) return;
       e.preventDefault();
       depth++;
-      // V režimu uspořádání ukazuje místo vložení přímo mřížka.
+      // While organizing, the grid itself shows where the pages go.
       if (!organizeRef.current) setDragging(true);
     };
     const onOver = (e: DragEvent) => {
@@ -447,8 +467,10 @@ export function App() {
         organizerRef.current?.insertFiles(await Promise.all(files.map(fileFromDrop)));
         return;
       }
-      const file = files.find((f) => /\.pdf$/i.test(f.name) || f.type === "application/pdf") ?? files[0];
-      await openFile(await fileFromDrop(file));
+      const pdfs = files.filter((f) => isPdfName(f.name) || f.type === "application/pdf");
+      // Other formats MuPDF can show (XPS, EPUB, images) open one at a time.
+      const chosen = pdfs.length ? pdfs : files.slice(0, 1);
+      await openFilesRef.current(await Promise.all(chosen.map(fileFromDrop)));
     };
     window.addEventListener("dragenter", onEnter);
     window.addEventListener("dragover", onOver);
@@ -460,177 +482,74 @@ export function App() {
       window.removeEventListener("dragleave", onLeave);
       window.removeEventListener("drop", onDrop);
     };
-  }, [openFile]);
-
-  // ---------- Zoom ----------
-
-  useEffect(() => {
-    if (!doc || !fit || !viewport.width) return;
-    setScale(fitScale(doc.info.pages, fit, viewport.width, viewport.height, currentPageRef.current));
-  }, [doc?.info, fit, viewport]);
-
-  const zoomTo = useCallback((s: number) => {
-    setFit(null);
-    setScale(clampScale(s));
   }, []);
-  const zoomStep = useCallback((dir: 1 | -1) => {
-    setFit(null);
-    setScale((s) => nextZoomStep(s, dir));
-  }, []);
-  const onViewport = useCallback((width: number, height: number) => setViewport({ width, height }), []);
 
-  // ---------- Navigace ----------
-
-  const goToPage = useCallback((i: number) => viewerRef.current?.goToPage(i), []);
-
-  // ---------- Hledání ----------
-
-  const runSearch = useCallback(
-    async (query: string, dir: 1 | -1) => {
-      const d = docRef.current;
-      if (!d || !query) return;
-      if (query === search.query && search.done) {
-        if (!search.hits.length) return;
-        const n = search.hits.length;
-        setSearch({ ...search, active: (search.active + dir + n) % n });
-        return;
-      }
-      setSearch({ ...NO_SEARCH, query, busy: true });
-      try {
-        const hits = await engine.search(d.info.docId, query);
-        if (docRef.current?.info !== d.info) return;
-        const from = currentPageRef.current;
-        const first = Math.max(0, hits.findIndex((h) => h.page >= from));
-        setSearch({ query, hits, active: first, done: true, busy: false });
-      } catch (e) {
-        setSearch(NO_SEARCH);
-        setError(`Hledání selhalo: ${errorText(e)}`);
-      }
-    },
-    [engine, search],
-  );
-
-  useEffect(() => {
-    const hit = search.hits[search.active];
-    if (hit) viewerRef.current?.revealHit(hit);
-  }, [search.hits, search.active]);
-
-  // ---------- Klávesové zkratky ----------
+  // ---------- Window-wide keyboard shortcuts ----------
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      // V režimu uspořádání má vlastní zkratky organizér; dialogy mají přednost.
-      if (organizeRef.current || choice || passwordAsk) return;
+      // The organizer has its own shortcuts; dialogs come first.
+      if (organizeRef.current || document.querySelector(".modal-backdrop")) return;
       const ctrl = e.ctrlKey || e.metaKey;
-      const inInput = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
       const key = e.key.toLowerCase();
+      const s = tabsRef.current;
+      const current = s.tabs.find((x) => x.id === s.activeId);
       if (ctrl && key === "o") {
         e.preventDefault();
         void openDialog();
       } else if (ctrl && key === "s") {
         e.preventDefault();
-        if (docRef.current && !busy) void saveDoc(e.shiftKey);
-      } else if (!docRef.current) {
-        return;
-      } else if (ctrl && key === "f") {
+        if (current?.doc && !busy) void saveDoc(current.id, e.shiftKey);
+      } else if (ctrl && (key === "w" || key === "f4")) {
         e.preventDefault();
-        searchRef.current?.focus();
-        searchRef.current?.select();
-      } else if (ctrl && key === "e") {
+        if (current) void closeTab(current.id);
+      } else if (ctrl && key === "t") {
         e.preventDefault();
-        setExportOpen(true);
-      } else if (ctrl && key === "c" && !inInput && selection?.text) {
+        commit(startTab);
+      } else if (ctrl && key === "tab") {
         e.preventDefault();
-        copyToClipboard(selection.text).then(
-          () => setToast("Text zkopírován"),
-          () => setError("Do schránky se nepodařilo zapsat"),
-        );
-      } else if (ctrl && (key === "+" || key === "=" || e.code === "NumpadAdd")) {
+        commit((st) => cycleTab(st, e.shiftKey ? -1 : 1));
+      } else if (ctrl && (key === "pagedown" || key === "pageup")) {
         e.preventDefault();
-        zoomStep(1);
-      } else if (ctrl && (key === "-" || e.code === "NumpadSubtract")) {
-        e.preventDefault();
-        zoomStep(-1);
-      } else if (ctrl && key === "0") {
-        e.preventDefault();
-        setFit("page");
-      } else if (ctrl && key === "1") {
-        e.preventDefault();
-        zoomTo(percentToScale(100));
-      } else if (ctrl && key === "2") {
-        e.preventDefault();
-        setFit("width");
-      } else if (key === "f3" && search.query) {
-        e.preventDefault();
-        void runSearch(search.query, e.shiftKey ? -1 : 1);
-      } else if (key === "f4") {
-        e.preventDefault();
-        setSidebarOpen((o) => !o);
-      } else if (key === "escape" && !inInput) {
-        setSelection(null);
-      } else if (!inInput && !ctrl && (key === "arrowleft" || key === "arrowright")) {
-        const d = docRef.current;
-        if (d && d.info.pageCount > 1 && fit === "page") {
-          e.preventDefault();
-          goToPage(currentPageRef.current + (key === "arrowright" ? 1 : -1));
-        }
+        commit((st) => cycleTab(st, key === "pagedown" ? 1 : -1));
+      } else if (ctrl && key === "p" && !current?.doc) {
+        e.preventDefault(); // nothing to print on the start page
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [openDialog, saveDoc, busy, choice, passwordAsk, selection, zoomStep, zoomTo, search.query, runSearch, fit, goToPage]);
+  }, [openDialog, saveDoc, closeTab, commit, busy]);
 
   useEffect(() => {
     try {
       localStorage.setItem(SIDEBAR_KEY, sidebarOpen ? "1" : "0");
     } catch {
-      /* nevadí */
+      /* not critical */
     }
   }, [sidebarOpen]);
 
   useEffect(() => {
     if (!toast) return;
-    const t = setTimeout(() => setToast(null), 2200);
-    return () => clearTimeout(t);
+    const timer = setTimeout(() => setToast(null), 2200);
+    return () => clearTimeout(timer);
   }, [toast]);
 
-  // ---------- Vykreslení ----------
+  const toggleSidebar = useCallback(() => setSidebarOpen((o) => !o), []);
+  const openDialogCb = useCallback(() => void openDialog(), [openDialog]);
+  const showTabBar = tabs.some((x) => x.doc) || tabs.length > 1;
 
-  const info = doc?.info;
+  // ---------- Rendering ----------
 
   return (
     <div className="app">
-      {!organize && (
-        <Toolbar
-          docKey={info?.docId ?? 0}
-          hasDoc={!!info}
-          dirty={!!doc?.dirty}
-          canOrganize={!!info?.isPdf}
-          pageCount={info?.pageCount ?? 0}
-          currentPage={currentPage}
-          scale={scale}
-          fit={fit}
-          sidebarOpen={sidebarOpen}
-          searchRef={searchRef}
-          searchInfo={{
-            query: search.query,
-            count: search.hits.length,
-            active: search.active,
-            done: search.done,
-            busy: search.busy,
-          }}
-          onOpen={openDialog}
-          onSave={() => void saveDoc(false)}
-          onSaveAs={() => void saveDoc(true)}
-          onOrganize={startOrganize}
-          onToggleSidebar={() => setSidebarOpen((o) => !o)}
-          onGoToPage={goToPage}
-          onZoomStep={zoomStep}
-          onZoomPercent={(p) => zoomTo(percentToScale(p))}
-          onFit={setFit}
-          onSearch={runSearch}
-          onSearchClear={() => setSearch(NO_SEARCH)}
-          onExport={() => setExportOpen(true)}
+      {showTabBar && (
+        <TabBar
+          tabs={tabs}
+          activeId={activeTab.id}
+          disabled={!!organize}
+          onActivate={activate}
+          onClose={(id) => void closeTab(id)}
+          onNew={() => commit(startTab)}
         />
       )}
 
@@ -638,13 +557,40 @@ export function App() {
         <div className="banner" role="alert">
           <span>{error}</span>
           <button className="btn small" onClick={() => setError(null)}>
-            Zavřít
+            {t.common.close}
           </button>
         </div>
       )}
 
-      <main className="workspace">
-        {organize ? (
+      <div className="stage">
+        {tabs.map((tab) =>
+          tab.doc ? (
+            <DocView
+              key={`${tab.id}:${tab.doc.info.docId}`}
+              engine={engine}
+              doc={tab.doc}
+              active={tab.id === activeTab.id && !organize}
+              sidebarOpen={sidebarOpen}
+              onToggleSidebar={toggleSidebar}
+              onOpen={openDialogCb}
+              onSave={(asNew) => void saveDoc(tab.id, asNew)}
+              onOrganize={startOrganize}
+              onToast={setToast}
+              onError={setError}
+            />
+          ) : (
+            <StartView
+              key={tab.id}
+              active={tab.id === activeTab.id && !organize}
+              loading={loading}
+              sidebarOpen={sidebarOpen}
+              onOpen={openDialogCb}
+              onMerge={() => void startMerge()}
+            />
+          ),
+        )}
+
+        {organize && (
           <Organizer
             key={organize.id}
             ref={organizerRef}
@@ -661,37 +607,14 @@ export function App() {
             onToast={setToast}
             onError={setError}
           />
-        ) : (
-          <>
-            {info && sidebarOpen && (
-              <Sidebar engine={engine} doc={info} currentPage={currentPage} onGoToPage={goToPage} />
-            )}
-            {info ? (
-              <Viewer
-                ref={viewerRef}
-                engine={engine}
-                doc={info}
-                scale={scale}
-                hits={search.hits}
-                activeHit={search.active}
-                selection={selection}
-                onSelection={setSelection}
-                onViewport={onViewport}
-                onCurrentPage={setCurrentPage}
-                onZoom={zoomTo}
-              />
-            ) : (
-              <EmptyState loading={loading} onOpen={openDialog} onMerge={startMerge} />
-            )}
-          </>
         )}
-      </main>
+      </div>
 
       {dragging && (
         <div className="drop-overlay">
           <div className="drop-card">
             <FileUp size={40} />
-            <p>Pusťte PDF pro otevření</p>
+            <p>{t.app.dropToOpen}</p>
           </div>
         </div>
       )}
@@ -706,20 +629,6 @@ export function App() {
       )}
 
       {toast && <div className="toast">{toast}</div>}
-
-      {exportOpen && doc && !organize && (
-        <ExportDialog
-          engine={engine}
-          doc={doc.info}
-          fileName={doc.name}
-          defaultDir={doc.dir}
-          currentPage={currentPage}
-          onClose={() => {
-            setExportOpen(false);
-            viewerRef.current?.focus();
-          }}
-        />
-      )}
 
       {passwordAsk && (
         <PasswordDialog
@@ -747,64 +656,5 @@ export function App() {
         />
       )}
     </div>
-  );
-}
-
-function EmptyState({ loading, onOpen, onMerge }: { loading: boolean; onOpen(): void; onMerge(): void }) {
-  return (
-    <div className="empty">
-      <div className="empty-card">
-        <img src="./logo.svg" alt="" width={72} height={72} />
-        <h1>Scamcrobat</h1>
-        <p className="muted">Svobodný prohlížeč PDF bez předplatného.</p>
-        <button className="btn primary large" onClick={onOpen} disabled={loading}>
-          <FolderOpen size={18} /> {loading ? "Otevírám…" : "Otevřít PDF"}
-        </button>
-        <p className="muted small">nebo soubor přetáhněte sem · Ctrl+O</p>
-        <button className="btn empty-secondary" onClick={onMerge} disabled={loading}>
-          <Combine size={16} /> Sloučit více PDF do jednoho
-        </button>
-        {!isDesktop && (
-          <p className="muted small">Soubory se nikam neodesílají, vše se zpracovává ve vašem prohlížeči.</p>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function PasswordDialog(props: { fileName: string; wrong: boolean; onSubmit(password: string): void; onClose(): void }) {
-  const [value, setValue] = useState("");
-  return (
-    <Modal
-      title="Dokument je chráněný heslem"
-      onClose={props.onClose}
-      footer={
-        <>
-          <button className="btn" onClick={props.onClose}>
-            Zrušit
-          </button>
-          <button className="btn primary" disabled={!value} onClick={() => props.onSubmit(value)}>
-            Otevřít
-          </button>
-        </>
-      }
-    >
-      <div className="password-row">
-        <Lock size={20} className="muted" />
-        <p>
-          Zadejte heslo k souboru <strong>{props.fileName}</strong>.
-        </p>
-      </div>
-      <input
-        className={props.wrong ? "input wide invalid" : "input wide"}
-        type="password"
-        value={value}
-        autoFocus
-        onChange={(e) => setValue(e.target.value)}
-        onKeyDown={(e) => e.key === "Enter" && value && props.onSubmit(value)}
-        aria-label="Heslo"
-      />
-      {props.wrong && <p className="hint error">Nesprávné heslo, zkuste to znovu.</p>}
-    </Modal>
   );
 }

@@ -1,6 +1,9 @@
-"""Vygeneruje testovací PDF (víc stránek, osnova, česká diakritika, stránka na šířku).
+"""Generates the test PDF (several pages, outline, Czech diacritics, a landscape page).
 
-Použití: python scripts/make-test-pdf.py  ->  test/fixtures/sample.pdf
+The text is intentionally Czech: it exercises accented characters in rendering,
+search and text selection.
+
+Usage: python scripts/make-test-pdf.py  ->  test/fixtures/sample.pdf
 """
 from pathlib import Path
 

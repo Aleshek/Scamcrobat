@@ -1,21 +1,26 @@
 import { useEffect, useRef, type ReactNode } from "react";
 import { X } from "lucide-react";
+import { useT } from "../i18n";
 
 interface Props {
   title: string;
   onClose(): void;
   children: ReactNode;
   footer?: ReactNode;
-  /** Zakáže zavření (např. během exportu) */
+  /** Prevents closing (e.g. while exporting) */
   locked?: boolean;
 }
 
 export function Modal({ title, onClose, children, footer, locked }: Props) {
+  const t = useT();
   const dialogRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const prev = document.activeElement as HTMLElement | null;
-    const first = dialogRef.current?.querySelector<HTMLElement>("input, select, button:not(.modal-close)");
+    // An element marked data-autofocus wins, otherwise the first field or button.
+    const first =
+      dialogRef.current?.querySelector<HTMLElement>("[data-autofocus]") ??
+      dialogRef.current?.querySelector<HTMLElement>("input, select, button:not(.modal-close)");
     first?.focus();
     return () => prev?.focus?.();
   }, []);
@@ -36,7 +41,7 @@ export function Modal({ title, onClose, children, footer, locked }: Props) {
       <div className="modal" role="dialog" aria-modal="true" aria-label={title} ref={dialogRef}>
         <div className="modal-head">
           <h2>{title}</h2>
-          <button className="modal-close" onClick={onClose} disabled={locked} aria-label="Zavřít">
+          <button className="modal-close" onClick={onClose} disabled={locked} aria-label={t.common.close}>
             <X size={18} />
           </button>
         </div>

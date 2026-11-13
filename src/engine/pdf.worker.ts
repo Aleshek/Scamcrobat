@@ -1,6 +1,8 @@
 /**
- * PDF jádro běžící ve Web Workeru. Veškerá práce s MuPDF (WASM) se děje tady,
- * aby vykreslování nebrzdilo uživatelské rozhraní.
+ * The PDF engine running in a Web Worker. All work with MuPDF (WASM) happens here
+ * so that rendering never blocks the user interface.
+ *
+ * Errors carry a `code` that the UI translates; the messages are only for logs.
  */
 import * as mupdf from "mupdf";
 import type {
@@ -34,7 +36,7 @@ class CodedError extends Error {
 
 interface DocEntry {
   doc: mupdf.Document;
-  /** Původní obsah souboru – z něj se při úpravách dělá čistá kopie a ukládá se. */
+  /** Original file content – edits start from a clean copy of it, and it is what gets saved. */
   bytes: Uint8Array;
   password?: string;
 }
@@ -42,13 +44,13 @@ interface DocEntry {
 const docs = new Map<number, DocEntry>();
 let nextDocId = 1;
 
-// Malá LRU cache strukturovaného textu (pro výběr textu tažením myši).
+// Small LRU cache of structured text (for selecting text by dragging).
 const stextCache = new Map<string, mupdf.StructuredText>();
 const STEXT_CACHE_SIZE = 6;
 
 function getEntry(docId: number): DocEntry {
   const entry = docs.get(docId);
-  if (!entry) throw new CodedError("Dokument není otevřený", "NO_DOC");
+  if (!entry) throw new CodedError("Document is not open", "NO_DOC");
   return entry;
 }
 
@@ -58,27 +60,27 @@ function getDoc(docId: number): mupdf.Document {
 
 function getPdf(docId: number): mupdf.PDFDocument {
   const pdf = getDoc(docId).asPDF();
-  if (!pdf) throw new CodedError("Upravovat lze jen dokumenty PDF", "NOT_PDF");
+  if (!pdf) throw new CodedError("Only PDF documents can be edited", "NOT_PDF");
   return pdf;
 }
 
-/** Otevře dokument z bajtů a ověří heslo. */
+/** Opens a document from bytes and checks the password. */
 function openBytes(bytes: Uint8Array, name: string, password?: string): mupdf.Document {
   const doc = mupdf.Document.openDocument(bytes, name || "application/pdf");
   if (doc.needsPassword()) {
     if (!password) {
       doc.destroy();
-      throw new CodedError("Dokument je chráněný heslem", "PASSWORD_REQUIRED");
+      throw new CodedError("Document is password protected", "PASSWORD_REQUIRED");
     }
     if (!doc.authenticatePassword(password)) {
       doc.destroy();
-      throw new CodedError("Nesprávné heslo", "PASSWORD_WRONG");
+      throw new CodedError("Incorrect password", "PASSWORD_WRONG");
     }
   }
   return doc;
 }
 
-/** Zaregistruje otevřený dokument a vrátí informace o něm pro UI. */
+/** Registers an open document and returns information about it for the UI. */
 function registerDoc(doc: mupdf.Document, bytes: Uint8Array, password?: string): DocInfo {
   const pageCount = doc.countPages();
   const pages: PageInfo[] = [];
@@ -89,7 +91,7 @@ function registerDoc(doc: mupdf.Document, bytes: Uint8Array, password?: string):
     try {
       label = page.getLabel() || label;
     } catch {
-      /* jiné formáty než PDF nemají štítky stránek */
+      /* formats other than PDF have no page labels */
     }
     pages.push({ x0, y0, width: x1 - x0, height: y1 - y0, label });
     page.destroy();
@@ -98,7 +100,7 @@ function registerDoc(doc: mupdf.Document, bytes: Uint8Array, password?: string):
   try {
     outline = convertOutline(doc.loadOutline());
   } catch {
-    /* poškozené záložky ignorujeme */
+    /* ignore broken bookmarks */
   }
   const title = doc.getMetaData(mupdf.Document.META_INFO_TITLE)?.trim() || null;
   const docId = nextDocId++;
@@ -106,7 +108,7 @@ function registerDoc(doc: mupdf.Document, bytes: Uint8Array, password?: string):
   return { docId, pageCount, pages, title, outline, isPdf: doc.asPDF() !== null };
 }
 
-/** Základ nového PDF: preferovaný dokument, jinak ten, ze kterého pochází nejvíc stránek. */
+/** Base of a new PDF: the preferred document, otherwise the one most pages come from. */
 function pickBase(refs: PageRef[], prefer?: number): number {
   if (prefer !== undefined && refs.some((r) => r.docId === prefer)) return prefer;
   const counts = new Map<number, number>();
@@ -119,18 +121,18 @@ function pickBase(refs: PageRef[], prefer?: number): number {
 const normalizeRotation = (deg: number) => (((Math.round(deg / 90) * 90) % 360) + 360) % 360;
 
 /**
- * Sestaví nové PDF ze zadaných stránek (pořadí, otočení, stránky z více souborů).
+ * Builds a new PDF from the given pages (order, rotation, pages from several files).
  *
- * Základem je čerstvá kopie hlavního dokumentu (viz pickBase) – díky tomu
- * zůstanou zachované jeho záložky, metadata, formuláře a odkazy. Stránky z ostatních
- * souborů se do něj „naroubují“ a nakonec se vše přeskládá do požadovaného pořadí.
+ * It starts from a fresh copy of the main document (see pickBase), so its bookmarks,
+ * metadata, forms and links are kept. Pages from other files are grafted into it
+ * and finally everything is rearranged into the requested order.
  */
 function buildPdf(refs: PageRef[], prefer?: number): Uint8Array {
-  if (!refs.length) throw new CodedError("Dokument musí mít aspoň jednu stránku", "EMPTY");
+  if (!refs.length) throw new CodedError("Document must have at least one page", "EMPTY");
 
   const baseId = pickBase(refs, prefer);
   const baseEntry = getEntry(baseId);
-  getPdf(baseId); // ověří, že jde o PDF
+  getPdf(baseId); // make sure it is a PDF
   const base = openBytes(baseEntry.bytes, "application/pdf", baseEntry.password).asPDF()!;
   const graftMaps = new Map<number, mupdf.PDFGraftMap>();
   try {
@@ -215,7 +217,7 @@ function convertOutline(items: ReturnType<mupdf.Document["loadOutline"]>): Outli
   }));
 }
 
-/** Vykreslí stránku do RGB pixmapy v daném měřítku (1 = 72 DPI). */
+/** Renders a page into an RGB pixmap at the given scale (1 = 72 DPI). */
 function renderPixmap(docId: number, pageIndex: number, scale: number): mupdf.Pixmap {
   const page = getDoc(docId).loadPage(pageIndex);
   try {
@@ -225,7 +227,7 @@ function renderPixmap(docId: number, pageIndex: number, scale: number): mupdf.Pi
   }
 }
 
-/** Převede RGB pixmapu na ImageData (RGBA). */
+/** Converts an RGB pixmap to ImageData (RGBA). */
 function pixmapToImageData(pix: mupdf.Pixmap): ImageData {
   const w = pix.getWidth();
   const h = pix.getHeight();
@@ -296,7 +298,7 @@ const handlers: { [M in EngineMethod]: Handler<M> } = {
         canvas.getContext("2d")!.putImageData(pixmapToImageData(pix), 0, 0);
         const blob = await canvas.convertToBlob({ type: "image/webp", quality: quality / 100 });
         if (blob.type !== "image/webp") {
-          throw new CodedError("Tento prohlížeč neumí ukládat WebP", "WEBP_UNSUPPORTED");
+          throw new CodedError("This browser cannot encode WebP", "WEBP_UNSUPPORTED");
         }
         data = new Uint8Array(await blob.arrayBuffer());
       }
@@ -313,7 +315,8 @@ const handlers: { [M in EngineMethod]: Handler<M> } = {
     for (let i = 0; i < count; i++) {
       const page = doc.loadPage(i);
       try {
-        for (const quads of page.search(needle, undefined)) {
+        // Like browsers: "Crows" matches "crows", "zlutoucky" matches "žluťoučký".
+        for (const quads of page.search(needle, "ignore-case,ignore-diacritics")) {
           hits.push({ page: i, quads: quads as Quad[] });
         }
       } finally {
@@ -339,7 +342,7 @@ const handlers: { [M in EngineMethod]: Handler<M> } = {
 
   compose({ pages, base }) {
     const bytes = buildPdf(pages, base);
-    // Výsledek zůstává zašifrovaný stejně jako základní dokument, proto stejné heslo.
+    // The result stays encrypted like the base document, hence the same password.
     const password = docs.get(pickBase(pages, base))?.password;
     const doc = openBytes(bytes, "application/pdf", password);
     return [registerDoc(doc, bytes, password)];
@@ -369,5 +372,5 @@ scope.onmessage = async (e) => {
   }
 };
 
-// MuPDF se načítá asynchronně (WASM); zpráva s id 0 dává UI vědět, že jádro je připravené.
+// MuPDF loads asynchronously (WASM); the message with id 0 tells the UI the engine is ready.
 scope.postMessage({ id: 0, ok: true, result: "ready" });

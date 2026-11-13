@@ -1,6 +1,6 @@
-# Webová verze na GitHub Pages – nasadí se při každém pushi do main.
-# V nastavení repozitáře je potřeba zapnout: Settings → Pages → Source: GitHub Actions.
-name: Webová verze
+# Web version on GitHub Pages – deployed on every push to main.
+# The repository settings need: Settings → Pages → Source: GitHub Actions.
+name: Web version
 
 on:
   push:
@@ -21,7 +21,7 @@ env:
 
 jobs:
   build:
-    name: Sestavení
+    name: Build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -37,7 +37,7 @@ jobs:
           path: dist
 
   deploy:
-    name: Nasazení
+    name: Deploy
     needs: build
     runs-on: ubuntu-latest
     environment:

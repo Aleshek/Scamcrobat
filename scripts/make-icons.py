@@ -1,6 +1,6 @@
-"""Z SVG vygeneruje ikony pro Windows (.ico) a PNG.
+"""Generates Windows icons (.ico) and PNG from SVG.
 
-Použití: python scripts/make-icons.py
+Usage: python scripts/make-icons.py
   public/logo.svg     -> build/icon.ico, build/icon.png
   build/file-pdf.svg  -> build/file-pdf.ico
 """

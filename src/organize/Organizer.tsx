@@ -26,13 +26,14 @@ import {
 import { isAbortError, PRIORITY_THUMBNAIL, type PdfEngine } from "../engine/engine";
 import type { DocInfo, PageRef } from "../engine/types";
 import { fileFromDrop, openFilesDialog, savePdfAs, type OpenedFile } from "../platform";
+import { errorText } from "../errors";
+import { useT } from "../i18n";
 import {
   deletePages,
   groupLabel,
   historyReducer,
   insertPages,
   movePages,
-  pageCountLabel,
   pagesFromDoc,
   rotatePages,
   samePages,
@@ -44,16 +45,16 @@ import { SplitDialog } from "./SplitDialog";
 
 export interface OrganizeResult {
   pages: PageRef[];
-  /** Liší se výsledek od původního dokumentu? */
+  /** Does the result differ from the original document? */
   changed: boolean;
-  /** Dokumenty otevřené organizérem, které je potřeba zavřít */
+  /** Documents opened by the organizer that must be closed */
   owned: number[];
-  /** Původní dokument – jeho záložky a metadata mají přednost */
+  /** The original document – its bookmarks and metadata take precedence */
   base?: number;
 }
 
 export interface OrganizerHandle {
-  /** Vloží soubory přetažené mimo mřížku (za výběr, jinak na konec). */
+  /** Inserts files dropped outside the grid (after the selection, otherwise at the end). */
   insertFiles(files: OpenedFile[]): void;
   result(): OrganizeResult;
 }
@@ -63,12 +64,12 @@ interface Props {
   engine: PdfEngine;
   sources: OrgSource[];
   pages: OrgPage[];
-  /** Nový dokument (slučování) – výsledek se počítá jako změna i bez úprav. */
+  /** A new document (merging) – the result counts as a change even without edits. */
   isNew: boolean;
-  /** Základ názvů výstupních souborů (bez přípony) */
+  /** Base of output file names (without extension) */
   baseName: string;
   baseDir?: string;
-  /** Otevře soubory jako zdroje stránek (s dotazem na heslo), chyby hlásí sám. */
+  /** Opens files as page sources (asking for passwords); reports errors itself. */
   openSources(files: OpenedFile[]): Promise<{ info: DocInfo; file: OpenedFile }[]>;
   onApply(result: OrganizeResult, opts?: { save?: boolean }): void;
   onCancel(result: OrganizeResult): void;
@@ -89,7 +90,7 @@ function readSize() {
     const n = Number(localStorage.getItem(SIZE_KEY));
     if (n >= SIZE_MIN && n <= SIZE_MAX) return n;
   } catch {
-    /* nevadí */
+    /* not critical */
   }
   return 150;
 }
@@ -103,6 +104,7 @@ interface DropMarker {
 
 export function Organizer(props: Props) {
   const { engine } = props;
+  const t = useT();
   const [history, dispatch] = useReducer(historyReducer, null, () => ({
     past: [],
     present: props.pages,
@@ -128,7 +130,7 @@ export function Organizer(props: Props) {
   const gridRef = useRef<HTMLDivElement>(null);
   const scrollToKey = useRef<string | null>(null);
 
-  // Výběr jen ze stránek, které v dokumentu opravdu jsou (po Zpět se mohou ztratit).
+  // Selection only of pages that are really in the document (they can disappear after undo).
   const selectedKeys = useMemo(() => {
     const present = new Set(pages.map((p) => p.key));
     return new Set([...selected].filter((k) => present.has(k)));
@@ -156,7 +158,7 @@ export function Organizer(props: Props) {
   const sourceIndex = useMemo(() => new Map(sources.map((s, i) => [s.docId, i])), [sources]);
   const multiSource = new Set(pages.map((p) => p.docId)).size > 1;
 
-  // ---------- Úpravy ----------
+  // ---------- Edits ----------
 
   const rotateSelected = (delta: number) => {
     if (selectedKeys.size) setPages(rotatePages(pages, selectedKeys, delta));
@@ -179,7 +181,7 @@ export function Organizer(props: Props) {
   const insertFiles = useCallback(
     async (files: OpenedFile[], at?: number) => {
       if (!files.length) return;
-      setWorking("Načítám soubory…");
+      setWorking(t.organize.loadingFiles);
       try {
         const opened = await props.openSources(files);
         if (!opened.length) return;
@@ -193,21 +195,19 @@ export function Organizer(props: Props) {
         setSelected(new Set(added.map((p) => p.key)));
         anchorRef.current = added[0]?.key ?? null;
         scrollToKey.current = added[0]?.key ?? null;
-        props.onToast(
-          added.length === 1 ? "Vložena 1 stránka" : added.length < 5 ? `Vloženy ${added.length} stránky` : `Vloženo ${added.length} stránek`,
-        );
+        props.onToast(t.organize.inserted(added.length));
       } finally {
         setWorking(null);
       }
     },
-    [props.openSources, props.onToast, setPages],
+    [props.openSources, props.onToast, setPages, t],
   );
 
   const insertFromDialog = async () => {
     try {
-      await insertFiles(await openFilesDialog("Vložit stránky z PDF"));
+      await insertFiles(await openFilesDialog(t.organize.insertDialogTitle));
     } catch (e) {
-      props.onError(`Soubory se nepodařilo načíst: ${e instanceof Error ? e.message : String(e)}`);
+      props.onError(t.organize.loadFailed(errorText(e)));
     }
   };
 
@@ -216,7 +216,7 @@ export function Organizer(props: Props) {
     result,
   ]);
 
-  // Po vložení posunout na první vloženou stránku.
+  // After inserting, scroll to the first inserted page.
   useEffect(() => {
     const key = scrollToKey.current;
     if (!key) return;
@@ -229,20 +229,21 @@ export function Organizer(props: Props) {
   const extractSelected = async () => {
     const chosen = pages.filter((p) => selectedKeys.has(p.key));
     if (!chosen.length) return;
-    setWorking("Sestavuji PDF…");
+    setWorking(t.organize.building);
     try {
       const data = await engine.buildPdf(toRefs(chosen), baseDoc);
       const indices = pages.flatMap((p, i) => (selectedKeys.has(p.key) ? [i] : []));
-      const saved = await savePdfAs(data, `${props.baseName}_${groupLabel(indices)}.pdf`, props.baseDir);
-      if (saved) props.onToast(`Uloženo – ${saved.name}`);
+      const name = `${props.baseName}_${groupLabel(indices, t.organize.selectionSuffix)}.pdf`;
+      const saved = await savePdfAs(data, name, props.baseDir);
+      if (saved) props.onToast(t.app.saved(saved.name));
     } catch (e) {
-      props.onError(`Extrakce stránek selhala: ${e instanceof Error ? e.message : String(e)}`);
+      props.onError(t.organize.extractFailed(errorText(e)));
     } finally {
       setWorking(null);
     }
   };
 
-  // ---------- Výběr ----------
+  // ---------- Selection ----------
 
   const onCellClick = useCallback((e: ReactMouseEvent, key: string) => {
     const ctrl = e.ctrlKey || e.metaKey;
@@ -285,11 +286,11 @@ export function Organizer(props: Props) {
     [setPages],
   );
 
-  // ---------- Klávesnice ----------
+  // ---------- Keyboard ----------
 
   const keyHandler = useRef<(e: KeyboardEvent) => void>(() => {});
   keyHandler.current = (e: KeyboardEvent) => {
-    // Otevřený dialog (rozdělení, potvrzení…) má klávesy pro sebe.
+    // An open dialog (split, confirmation…) keeps the keys for itself.
     if (document.querySelector(".modal-backdrop")) return;
     const ctrl = e.ctrlKey || e.metaKey;
     const key = e.key.toLowerCase();
@@ -324,7 +325,7 @@ export function Organizer(props: Props) {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  // ---------- Velikost náhledů ----------
+  // ---------- Thumbnail size ----------
 
   const changeSize = (n: number) => {
     const next = Math.round(Math.min(SIZE_MAX, Math.max(SIZE_MIN, n)));
@@ -332,7 +333,7 @@ export function Organizer(props: Props) {
     try {
       localStorage.setItem(SIZE_KEY, String(next));
     } catch {
-      /* nevadí */
+      /* not critical */
     }
   };
 
@@ -346,7 +347,7 @@ export function Organizer(props: Props) {
         try {
           localStorage.setItem(SIZE_KEY, String(next));
         } catch {
-          /* nevadí */
+          /* not critical */
         }
         return next;
       });
@@ -355,7 +356,7 @@ export function Organizer(props: Props) {
     return () => el.removeEventListener("wheel", onWheel);
   }, []);
 
-  // ---------- Přetahování ----------
+  // ---------- Drag and drop ----------
 
   const hitTest = (clientX: number, clientY: number): DropMarker => {
     const grid = gridRef.current!;
@@ -368,7 +369,7 @@ export function Organizer(props: Props) {
       const r = el.getBoundingClientRect();
       const dx = clientX < r.left ? r.left - clientX : clientX > r.right ? clientX - r.right : 0;
       const dy = clientY < r.top ? r.top - clientY : clientY > r.bottom ? clientY - r.bottom : 0;
-      const d = dy * 10000 + dx; // přednost má řádek pod kurzorem
+      const d = dy * 10000 + dx; // the row under the cursor wins
       if (d < bestDist) {
         bestDist = d;
         best = { el, r };
@@ -440,76 +441,76 @@ export function Organizer(props: Props) {
     }
   };
 
-  // ---------- Vykreslení ----------
+  // ---------- Rendering ----------
 
   const count = pages.length;
   const sel = selectedKeys.size;
   const noSel = sel === 0;
-  const needSel = noSel ? "Nejdřív vyberte stránky" : undefined;
+  const needSel = noSel ? t.organize.needSelection : undefined;
 
   return (
     <div className="organizer">
       <div className="toolbar org-bar">
         <div className="tb-group">
-          <button className="tb-btn" onClick={selectAll} disabled={!count} title="Vybrat vše (Ctrl+A)">
+          <button className="tb-btn" onClick={selectAll} disabled={!count} title={t.organize.selectAllTitle}>
             <SquareCheckBig size={18} />
-            <span className="tb-text">{count && sel === count ? "Zrušit výběr" : "Vybrat vše"}</span>
+            <span className="tb-text">{count && sel === count ? t.organize.deselectAll : t.organize.selectAll}</span>
           </button>
         </div>
         <div className="tb-sep" />
         <div className="tb-group">
-          <button className="tb-btn" onClick={() => rotateSelected(-90)} disabled={noSel} title={needSel ?? "Otočit vybrané doleva"}>
+          <button className="tb-btn" onClick={() => rotateSelected(-90)} disabled={noSel} title={needSel ?? t.organize.rotateLeftSelected}>
             <RotateCcw size={18} />
           </button>
-          <button className="tb-btn" onClick={() => rotateSelected(90)} disabled={noSel} title={needSel ?? "Otočit vybrané doprava"}>
+          <button className="tb-btn" onClick={() => rotateSelected(90)} disabled={noSel} title={needSel ?? t.organize.rotateRightSelected}>
             <RotateCw size={18} />
           </button>
-          <button className="tb-btn" onClick={deleteSelected} disabled={noSel} title={needSel ?? "Smazat vybrané (Delete)"}>
+          <button className="tb-btn" onClick={deleteSelected} disabled={noSel} title={needSel ?? t.organize.deleteSelected}>
             <Trash size={18} />
-            <span className="tb-text">Smazat</span>
+            <span className="tb-text">{t.organize.delete}</span>
           </button>
         </div>
         <div className="tb-sep" />
         <div className="tb-group">
-          <button className="tb-btn" onClick={insertFromDialog} disabled={!!working} title="Vložit stránky z jiného PDF (Ctrl+O)">
+          <button className="tb-btn" onClick={insertFromDialog} disabled={!!working} title={t.organize.insertTitle}>
             <FilePlus size={18} />
-            <span className="tb-text">Vložit PDF</span>
+            <span className="tb-text">{t.organize.insert}</span>
           </button>
           <button
             className="tb-btn"
             onClick={extractSelected}
             disabled={noSel || !!working}
-            title={needSel ?? "Uložit vybrané stránky jako nové PDF"}
+            title={needSel ?? t.organize.extractTitle}
           >
             <FileOutput size={18} />
-            <span className="tb-text">Extrahovat</span>
+            <span className="tb-text">{t.organize.extract}</span>
           </button>
-          <button className="tb-btn" onClick={() => setSplitOpen(true)} disabled={count < 2} title="Rozdělit na více PDF">
+          <button className="tb-btn" onClick={() => setSplitOpen(true)} disabled={count < 2} title={t.organize.splitTitle}>
             <Scissors size={18} />
-            <span className="tb-text">Rozdělit</span>
+            <span className="tb-text">{t.organize.split}</span>
           </button>
         </div>
         <div className="tb-sep" />
         <div className="tb-group">
-          <button className="tb-btn" onClick={() => dispatch({ type: "undo" })} disabled={!history.past.length} title="Zpět (Ctrl+Z)">
+          <button className="tb-btn" onClick={() => dispatch({ type: "undo" })} disabled={!history.past.length} title={t.organize.undo}>
             <Undo2 size={18} />
           </button>
-          <button className="tb-btn" onClick={() => dispatch({ type: "redo" })} disabled={!history.future.length} title="Znovu (Ctrl+Y)">
+          <button className="tb-btn" onClick={() => dispatch({ type: "redo" })} disabled={!history.future.length} title={t.organize.redo}>
             <Redo2 size={18} />
           </button>
         </div>
         <div className="tb-spacer" />
         <button className="tb-btn" onClick={() => props.onCancel(result())}>
-          Zrušit
+          {t.common.cancel}
         </button>
         <button
           className="tb-btn primary"
           onClick={() => props.onApply(result())}
           disabled={!count || !!working}
-          title={count ? "Použít změny a vrátit se k dokumentu" : "Dokument musí mít aspoň jednu stránku"}
+          title={count ? t.organize.doneTitle : t.organize.needOnePage}
         >
           <Check size={18} />
-          <span>Hotovo</span>
+          <span>{t.common.done}</span>
         </button>
       </div>
 
@@ -545,30 +546,28 @@ export function Organizer(props: Props) {
         </div>
         {!count && (
           <div className="org-empty">
-            <p>V dokumentu nezůstala žádná stránka.</p>
-            <p className="muted">Vložte stránky z jiného PDF, nebo změny vraťte (Ctrl+Z).</p>
+            <p>{t.organize.emptyTitle}</p>
+            <p className="muted">{t.organize.emptyHint}</p>
           </div>
         )}
       </div>
 
       <div className="org-status">
         <span>
-          {pageCountLabel(count)}
-          {sel > 0 && ` · vybráno ${sel}`}
+          {t.common.pages(count)}
+          {sel > 0 && ` · ${t.organize.selected(sel)}`}
           {working && ` · ${working}`}
         </span>
-        <span className="org-hint muted">
-          Klik vybere · Ctrl+klik přidá · Shift+klik rozsah · přetažením změníte pořadí
-        </span>
-        <label className="org-size" title="Velikost náhledů (Ctrl+kolečko)">
-          <span className="muted">Náhledy</span>
+        <span className="org-hint muted">{t.organize.hint}</span>
+        <label className="org-size" title={t.organize.thumbSizeTitle}>
+          <span className="muted">{t.organize.thumbnails}</span>
           <input
             type="range"
             min={SIZE_MIN}
             max={SIZE_MAX}
             value={size}
             onChange={(e) => changeSize(Number(e.target.value))}
-            aria-label="Velikost náhledů"
+            aria-label={t.organize.thumbSize}
           />
         </label>
       </div>
@@ -587,7 +586,7 @@ export function Organizer(props: Props) {
   );
 }
 
-// ---------- Jedna stránka v mřížce ----------
+// ---------- One page in the grid ----------
 
 interface CellProps {
   engine: PdfEngine;
@@ -606,13 +605,14 @@ interface CellProps {
 
 const OrgCell = memo(function OrgCell(props: CellProps) {
   const { engine, page, size } = props;
+  const t = useT();
   const cellRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const renderedScale = useRef(0);
   const [visible, setVisible] = useState(false);
   const [loaded, setLoaded] = useState(false);
 
-  // Velikost náhledu bez otočení – otáčí se až v CSS, aby šlo otočení animovat.
+  // Thumbnail size without rotation – rotation is applied in CSS so that it can be animated.
   const fit = (size * 0.94) / Math.max(page.width, page.height);
   const w = Math.round(page.width * fit);
   const h = Math.round(page.height * fit);
@@ -629,7 +629,7 @@ const OrgCell = memo(function OrgCell(props: CellProps) {
   useEffect(() => {
     const canvas = canvasRef.current!;
     if (!visible) {
-      // Náhledy daleko mimo obrazovku uvolníme (velké dokumenty = hodně paměti).
+      // Release thumbnails far off screen (large documents = lots of memory).
       if (renderedScale.current) {
         canvas.width = canvas.height = 0;
         renderedScale.current = 0;
@@ -665,7 +665,9 @@ const OrgCell = memo(function OrgCell(props: CellProps) {
     };
   }, [visible, fit, engine, page.docId, page.page]);
 
-  const title = props.sourceName ? `${props.sourceName} – strana ${page.page + 1}` : `Strana ${props.index + 1}`;
+  const title = props.sourceName
+    ? t.organize.sourcePage(props.sourceName, page.page + 1)
+    : t.common.pageN(String(props.index + 1));
 
   return (
     <div
@@ -691,13 +693,13 @@ const OrgCell = memo(function OrgCell(props: CellProps) {
           </span>
         )}
         <div className="org-actions" onClick={(e) => e.stopPropagation()}>
-          <button onClick={() => props.onAction(page.key, "left")} title="Otočit doleva" aria-label="Otočit doleva">
+          <button onClick={() => props.onAction(page.key, "left")} title={t.organize.rotateLeft} aria-label={t.organize.rotateLeft}>
             <RotateCcw size={15} />
           </button>
-          <button onClick={() => props.onAction(page.key, "right")} title="Otočit doprava" aria-label="Otočit doprava">
+          <button onClick={() => props.onAction(page.key, "right")} title={t.organize.rotateRight} aria-label={t.organize.rotateRight}>
             <RotateCw size={15} />
           </button>
-          <button onClick={() => props.onAction(page.key, "delete")} title="Smazat stránku" aria-label="Smazat stránku">
+          <button onClick={() => props.onAction(page.key, "delete")} title={t.organize.deletePage} aria-label={t.organize.deletePage}>
             <Trash size={15} />
           </button>
         </div>

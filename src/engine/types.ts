@@ -1,14 +1,14 @@
-/** Typy sdílené mezi UI a PDF workerem. Souřadnice stránek jsou v PDF bodech (1/72 palce). */
+/** Types shared by the UI and the PDF worker. Page coordinates are in PDF points (1/72 inch). */
 
 export type Point = [number, number];
-/** Čtyřúhelník: ul.x, ul.y, ur.x, ur.y, ll.x, ll.y, lr.x, lr.y */
+/** Quadrilateral: ul.x, ul.y, ur.x, ur.y, ll.x, ll.y, lr.x, lr.y */
 export type Quad = [number, number, number, number, number, number, number, number];
 
 export interface PageInfo {
-  /** Šířka a výška stránky v bodech */
+  /** Page width and height in points */
   width: number;
   height: number;
-  /** Levý horní roh stránky v souřadnicích PDF (obvykle 0,0) */
+  /** Top left corner of the page in PDF coordinates (usually 0,0) */
   x0: number;
   y0: number;
   label: string;
@@ -26,16 +26,16 @@ export interface DocInfo {
   pages: PageInfo[];
   title: string | null;
   outline: OutlineNode[];
-  /** Jen PDF lze upravovat (MuPDF umí otevřít i XPS, EPUB, obrázky…) */
+  /** Only PDFs can be edited (MuPDF also opens XPS, EPUB, images…) */
   isPdf: boolean;
 }
 
-/** Stránka ze zdrojového dokumentu při skládání nového PDF. */
+/** A page of a source document used when composing a new PDF. */
 export interface PageRef {
   docId: number;
-  /** Index stránky ve zdrojovém dokumentu */
+  /** Page index in the source document */
   page: number;
-  /** Dodatečné otočení po směru hodinových ručiček, násobek 90 (může být i záporné nebo > 360) */
+  /** Additional clockwise rotation, a multiple of 90 (may be negative or > 360) */
   rotate: number;
 }
 
@@ -64,7 +64,7 @@ export interface ExportResult {
   height: number;
 }
 
-/** Požadavky, které UI posílá workeru: název → [argumenty, výsledek] */
+/** Requests the UI sends to the worker: name → [arguments, result] */
 export interface EngineApi {
   open: [{ data: ArrayBuffer; name: string; password?: string }, DocInfo];
   close: [{ docId: number }, void];
@@ -78,11 +78,11 @@ export interface EngineApi {
     { docId: number; page: number; from: Point; to: Point; mode: "chars" | "words" },
     { quads: Quad[]; text: string },
   ];
-  /** Sestaví nové PDF ze stránek a rovnou ho otevře jako nový dokument. */
+  /** Builds a new PDF from pages and opens it right away as a new document. */
   compose: [{ pages: PageRef[]; base?: number }, DocInfo];
-  /** Sestaví nové PDF ze stránek a vrátí jeho obsah (extrakce, rozdělení). */
+  /** Builds a new PDF from pages and returns its content (extract, split). */
   buildPdf: [{ pages: PageRef[]; base?: number }, Uint8Array];
-  /** Obsah otevřeného dokumentu pro uložení na disk. */
+  /** Content of an open document, for saving to disk. */
   getBytes: [{ docId: number }, Uint8Array];
 }
 
@@ -98,6 +98,7 @@ export type EngineResponse =
   | { id: number; ok: true; result: unknown }
   | { id: number; ok: false; error: { message: string; code?: string } };
 
+/** Error from the engine; `code` (e.g. PASSWORD_REQUIRED) is translated by the UI. */
 export class EngineError extends Error {
   constructor(
     message: string,

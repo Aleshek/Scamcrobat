@@ -1,9 +1,9 @@
-"""Převod PDF stránek na JPG (PyMuPDF).
+"""Converts PDF pages to JPG (PyMuPDF).
 
-Použití:
-    python pdf2jpg.py <soubor.pdf | složka> [--dpi 200] [--quality 85] [--out JPG]
+Usage:
+    python pdf2jpg.py <file.pdf | folder> [--dpi 200] [--quality 85] [--out JPG]
 
-Jednostránkové PDF -> nazev.jpg, vícestránkové -> nazev_p1.jpg, nazev_p2.jpg, ...
+Single page PDF -> name.jpg, multi-page -> name_p1.jpg, name_p2.jpg, ...
 """
 import argparse
 import sys
@@ -25,17 +25,17 @@ def convert(pdf: Path, out_dir: Path, dpi: int, quality: int) -> list[Path]:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Převod PDF na JPG")
-    ap.add_argument("source", type=Path, help="PDF soubor nebo složka s PDF")
-    ap.add_argument("--dpi", type=int, default=200, help="rozlišení (výchozí 200)")
-    ap.add_argument("--quality", type=int, default=85, help="kvalita JPG 1-100 (výchozí 85)")
-    ap.add_argument("--out", type=Path, default=None, help="výstupní složka (výchozí: <zdroj>/JPG)")
+    ap = argparse.ArgumentParser(description="Convert PDF to JPG")
+    ap.add_argument("source", type=Path, help="a PDF file or a folder with PDFs")
+    ap.add_argument("--dpi", type=int, default=200, help="resolution (default 200)")
+    ap.add_argument("--quality", type=int, default=85, help="JPG quality 1-100 (default 85)")
+    ap.add_argument("--out", type=Path, default=None, help="output folder (default: <source>/JPG)")
     args = ap.parse_args()
 
     src = args.source
     pdfs = sorted(src.glob("*.pdf")) if src.is_dir() else [src]
     if not pdfs:
-        print(f"Žádné PDF v {src}", file=sys.stderr)
+        print(f"No PDF in {src}", file=sys.stderr)
         return 1
 
     out_dir = args.out or ((src if src.is_dir() else src.parent) / "JPG")

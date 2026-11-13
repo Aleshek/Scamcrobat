@@ -1,6 +1,6 @@
 /**
- * Datový model režimu „Uspořádat stránky“: seznam stránek (odkud pochází, jak je otočená)
- * s historií pro Zpět/Znovu. Skutečné PDF se z něj sestaví až při potvrzení.
+ * Data model of the "Organize pages" mode: a list of pages (where each comes from, how it
+ * is rotated) with undo/redo history. The real PDF is only built from it on confirmation.
  */
 import type { DocInfo, PageRef } from "../engine/types";
 
@@ -8,16 +8,16 @@ export interface OrgSource {
   docId: number;
   name: string;
   path?: string;
-  /** Dokument otevřel organizér (vložené PDF) – po skončení ho musí zavřít. */
+  /** The organizer opened this document (inserted PDF) – it must close it when done. */
   owned: boolean;
 }
 
 export interface OrgPage {
-  /** Stabilní klíč pro React a výběr */
+  /** Stable key for React and selection */
   key: string;
   docId: number;
   page: number;
-  /** Otočení navíc oproti originálu (kumulativně, kvůli plynulé animaci) */
+  /** Extra rotation compared to the original (cumulative, for a smooth animation) */
   rotate: number;
   width: number;
   height: number;
@@ -41,7 +41,7 @@ export const toRefs = (pages: OrgPage[]): PageRef[] =>
 
 export const effectiveRotation = (deg: number) => (((deg % 360) + 360) % 360);
 
-// ---------- Úpravy ----------
+// ---------- Edits ----------
 
 export function rotatePages(pages: OrgPage[], keys: Set<string>, delta: number): OrgPage[] {
   return pages.map((p) => (keys.has(p.key) ? { ...p, rotate: p.rotate + delta } : p));
@@ -51,7 +51,7 @@ export function deletePages(pages: OrgPage[], keys: Set<string>): OrgPage[] {
   return pages.filter((p) => !keys.has(p.key));
 }
 
-/** Přesune vybrané stránky na pozici `index` (index v původním seznamu, mezera před stránkou). */
+/** Moves the selected pages to position `index` (index in the original list, the gap before that page). */
 export function movePages(pages: OrgPage[], keys: Set<string>, index: number): OrgPage[] {
   const moving = pages.filter((p) => keys.has(p.key));
   const before = pages.slice(0, index).filter((p) => !keys.has(p.key));
@@ -70,7 +70,7 @@ export function samePages(a: OrgPage[], b: OrgPage[]) {
   );
 }
 
-// ---------- Historie (Zpět / Znovu) ----------
+// ---------- History (undo / redo) ----------
 
 export interface History {
   past: OrgPage[][];
@@ -89,7 +89,7 @@ export function historyReducer(state: History, action: HistoryAction): History {
   switch (action.type) {
     case "set":
       if (samePages(state.present, action.pages)) {
-        // Stejný obsah (např. jen jiné kumulativní otočení) – bez nového kroku historie.
+        // Same content (e.g. only a different cumulative rotation) – no new history step.
         return action.pages === state.present ? state : { ...state, present: action.pages };
       }
       return {
@@ -116,11 +116,11 @@ export function historyReducer(state: History, action: HistoryAction): History {
   }
 }
 
-// ---------- Rozdělení ----------
+// ---------- Splitting ----------
 
 /**
- * Rozparsuje skupiny stránek pro rozdělení, např. "1-3, 4-6, 7-" → [[0,1,2],[3,4,5],[6,…]].
- * Každá položka oddělená čárkou nebo středníkem je jeden výsledný soubor. Vrací null při chybě.
+ * Parses page groups for splitting, e.g. "1-3, 4-6, 7-" → [[0,1,2],[3,4,5],[6,…]].
+ * Every item separated by a comma or semicolon becomes one output file. Returns null on error.
  */
 export function parseRangeGroups(text: string, pageCount: number): number[][] | null {
   const parts = text
@@ -147,7 +147,7 @@ export function parseRangeGroups(text: string, pageCount: number): number[][] | 
   return groups;
 }
 
-/** Skupiny po `size` stránkách. */
+/** Groups of `size` pages. */
 export function chunkGroups(pageCount: number, size: number): number[][] {
   const groups: number[][] = [];
   for (let i = 0; i < pageCount; i += size) {
@@ -156,17 +156,14 @@ export function chunkGroups(pageCount: number, size: number): number[][] {
   return groups;
 }
 
-/** Popis rozsahu pro název souboru: [0,1,2] → "1-3", [4] → "5". */
-export function groupLabel(group: number[]): string {
+/**
+ * Range description for a file name: [0,1,2] → "1-3", [4] → "5",
+ * a non-contiguous selection [1,4,6] → "2-7_<selectionSuffix>".
+ */
+export function groupLabel(group: number[], selectionSuffix: string): string {
   const first = group[0] + 1;
   const last = group[group.length - 1] + 1;
   const contiguous = group.every((p, i) => i === 0 || p === group[i - 1] + 1);
   if (group.length === 1) return String(first);
-  return contiguous ? `${first}-${last}` : `${first}-${last}_vyber`;
-}
-
-export function pageCountLabel(n: number) {
-  if (n === 1) return "1 stránka";
-  if (n >= 2 && n <= 4) return `${n} stránky`;
-  return `${n} stránek`;
+  return contiguous ? `${first}-${last}` : `${first}-${last}_${selectionSuffix}`;
 }

@@ -1,5 +1,5 @@
-// Vývojový režim desktopové aplikace: spustí Vite dev server a Electron proti němu.
-// Použití: npm run dev:app [-- cesta\k\souboru.pdf]
+// Development mode of the desktop app: starts the Vite dev server and Electron against it.
+// Usage: npm run dev:app [-- path\to\file.pdf]
 import { spawn } from "node:child_process";
 import { createServer } from "vite";
 import electronPath from "electron";
@@ -7,7 +7,7 @@ import electronPath from "electron";
 const server = await createServer();
 await server.listen();
 const url = server.resolvedUrls?.local[0];
-console.log(`Vite běží na ${url}`);
+console.log(`Vite is running at ${url}`);
 
 const child = spawn(electronPath, [".", ...process.argv.slice(2)], {
   stdio: "inherit",
