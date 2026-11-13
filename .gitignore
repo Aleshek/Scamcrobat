@@ -1,0 +1,8 @@
+node_modules/
+dist/
+release/
+*.log
+
+# Pracovní dokumenty – nepatří do repozitáře
+PDF/
+.claude/settings.local.json
