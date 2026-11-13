@@ -4,6 +4,30 @@ Svobodný (AGPL-3.0) prohlížeč PDF a nástroje pro práci s PDF – bez před
 Běží jako desktopová aplikace pro Windows (lze nastavit jako výchozí program pro `.pdf`)
 i jako webová stránka; obě verze sdílí stejný kód.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/viewer-dark.png">
+  <img alt="Prohlížení PDF s hledáním v textu" src="docs/viewer-light.png">
+</picture>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/organizer-dark.png">
+  <img alt="Uspořádání stránek – otáčení, mazání, přeskládání a slučování PDF" src="docs/organizer-light.png">
+</picture>
+
+## Stažení
+
+**Windows:** instalátor `Scamcrobat-Setup-….exe` je u [poslední verze](../../releases/latest).
+Instaluje se jen pro aktuálního uživatele (nepotřebuje práva správce) a zaregistruje se
+jako program pro `.pdf`. Windows 11 nedovolí aplikacím nastavit se jako výchozí samy, takže
+po instalaci: pravým tlačítkem na PDF → Otevřít v programu → Zvolit jinou aplikaci →
+Scamcrobat → Vždy.
+
+Instalátor zatím není digitálně podepsaný, proto Windows SmartScreen při prvním spuštění
+zobrazí varování („Další informace → Přesto spustit“).
+
+**Web:** stejná aplikace běží i v prohlížeči (GitHub Pages tohoto repozitáře). Soubory se
+nikam neodesílají – vše se zpracovává přímo ve vašem prohlížeči.
+
 ## Co umí (verze 0.2)
 
 - otevření PDF dvojklikem, z dialogu (Ctrl+O) nebo přetažením do okna
@@ -44,13 +68,16 @@ npm run build        # webová verze do složky dist/ (stačí nahrát na libovo
 npm run dist         # instalátor pro Windows do složky release/
 ```
 
-Instalátor zaregistruje Scamcrobat jako program pro `.pdf`. Windows 11 nedovolí aplikacím
-nastavit se jako výchozí samy, takže po instalaci: **Nastavení → Aplikace → Výchozí aplikace →
-Scamcrobat → .pdf**, případně pravým tlačítkem na PDF → Otevřít v programu → Zvolit jinou aplikaci
-→ Scamcrobat → Vždy.
+### Vydání nové verze
 
-Instalátor zatím není digitálně podepsaný, proto Windows SmartScreen při prvním spuštění
-zobrazí varování („Další informace → Přesto spustit“).
+Instalátory staví GitHub (workflow `.github/workflows/release.yml`), ne vývojářův počítač:
+
+1. zvýšit `version` v `package.json` (a `npm install --package-lock-only`), commitnout
+2. `git tag v0.3.0` a `git push origin v0.3.0`
+3. GitHub sestaví instalátor na Windows a založí Release s automatickým seznamem změn
+
+Webová verze se na GitHub Pages nasazuje sama při každém pushi do `main`
+(`.github/workflows/pages.yml`; v nastavení repozitáře musí být Pages → Source: GitHub Actions).
 
 ## Architektura
 
@@ -79,8 +106,8 @@ přeskládá – proto zůstanou záložky, metadata, odkazy i formuláře. Ukl�
 přes dočasný soubor, takže při chybě (soubor otevřený jinde, plný disk) originál nepoškodí.
 
 Automatický test desktopové verze: `SCAMCROBAT_SMOKE_SHOT=snimek.png` (+ volitelně
-`SCAMCROBAT_SMOKE_SCRIPT=skript.js`, který se spustí v okně) – aplikace po načtení uloží
-snímek okna a skončí.
+`SCAMCROBAT_SMOKE_SCRIPT=skript.js`, který se spustí v okně, a `SCAMCROBAT_SMOKE_THEME=light|dark`)
+– aplikace po načtení uloží snímek okna a skončí. Tak vznikly i obrázky ve složce `docs/`.
 
 Pomocné skripty v Pythonu (vyžadují `pip install pymupdf pillow`):
 
@@ -107,3 +134,6 @@ python pdf2jpg.py PDF             # jednorázový převod složky PDF do JPG z p
 ## Licence
 
 [GNU AGPL-3.0 nebo novější](LICENSE). MuPDF © Artifex Software, Inc., AGPL-3.0.
+
+Scamcrobat je nezávislý projekt a nemá nic společného se společností Adobe.
+Adobe a Acrobat jsou ochranné známky společnosti Adobe Inc.

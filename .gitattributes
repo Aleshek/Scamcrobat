@@ -1,0 +1,9 @@
+# Textové soubory ukládat a vydávat s konci řádků LF (i na Windows),
+# aby se v historii nemíchalo LF a CRLF.
+* text=auto eol=lf
+
+# Binární soubory – nikdy nepřevádět
+*.pdf binary
+*.png binary
+*.ico binary
+*.wasm binary

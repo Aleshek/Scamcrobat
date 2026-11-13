@@ -119,8 +119,10 @@ function createWindow(filePath = null) {
 
 // Automatický test: SCAMCROBAT_SMOKE_SHOT=cesta.png → po načtení uloží snímek okna a skončí.
 // Volitelně SCAMCROBAT_SMOKE_SCRIPT=soubor.js – skript, který se před snímkem spustí v okně.
+// SCAMCROBAT_SMOKE_THEME=light|dark vynutí vzhled (screenshoty do README).
 const SMOKE_SHOT = process.env.SCAMCROBAT_SMOKE_SHOT || null;
 const SMOKE_SCRIPT = process.env.SCAMCROBAT_SMOKE_SCRIPT || null;
+const SMOKE_THEME = process.env.SCAMCROBAT_SMOKE_THEME;
 
 function attachSmokeTest(win) {
   win.webContents.on("console-message", (e) => console.log(`[renderer:${e.level}] ${e.message}`));
@@ -165,6 +167,7 @@ if (!gotLock) {
 
   app.whenReady().then(() => {
     Menu.setApplicationMenu(null);
+    if (SMOKE_SHOT && (SMOKE_THEME === "light" || SMOKE_THEME === "dark")) nativeTheme.themeSource = SMOKE_THEME;
 
     protocol.handle("app", (request) => {
       const { host, pathname } = new URL(request.url);

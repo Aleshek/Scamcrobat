@@ -1,0 +1,65 @@
+# Vydání nové verze: po pushnutí tagu (např. v0.3.0) GitHub sestaví instalátor pro Windows
+# a připojí ho k nové Release. Verze v tagu musí odpovídat verzi v package.json.
+#
+#   git tag v0.3.0
+#   git push origin v0.3.0
+#
+# Ruční spuštění (Actions → Vydání → Run workflow) jen sestaví zkušební instalátor
+# a nabídne ho ke stažení u běhu workflow – žádná Release nevznikne.
+name: Vydání
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  # Binárku Electronu z npm nepotřebujeme – electron-builder si stahuje vlastní.
+  ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+
+jobs:
+  windows:
+    name: Instalátor pro Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 26
+          cache: npm
+
+      - name: Kontrola verze
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          version=$(node -p "require('./package.json').version")
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME neodpovídá verzi v package.json ($version)"
+            exit 1
+          fi
+
+      - run: npm ci
+      - run: npm run build
+      - name: Sestavení instalátoru
+        run: npx electron-builder --win --publish never
+
+      - name: Vytvoření Release
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" release/Scamcrobat-Setup-*.exe \
+            --title "Scamcrobat ${GITHUB_REF_NAME#v}" \
+            --generate-notes
+
+      - name: Zkušební instalátor ke stažení
+        if: "!startsWith(github.ref, 'refs/tags/')"
+        uses: actions/upload-artifact@v4
+        with:
+          name: Scamcrobat-Setup
+          path: release/Scamcrobat-Setup-*.exe
+          retention-days: 14
