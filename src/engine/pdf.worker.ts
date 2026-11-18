@@ -12,6 +12,7 @@ import type {
   AnnotInfo,
   Color,
   DocInfo,
+  DocRights,
   EditState,
   LinkInfo,
   NewAnnot,
@@ -137,7 +138,7 @@ function newEntry(doc: mupdf.Document, bytes: Uint8Array, password?: string, own
 }
 
 /** Registers an open document and returns information about it for the UI. */
-function registerDoc(doc: mupdf.Document, bytes: Uint8Array, password?: string): DocInfo {
+function registerDoc(doc: mupdf.Document, bytes: Uint8Array, password?: string, ownerPassword?: string): DocInfo {
   const pageCount = doc.countPages();
   const pages: PageInfo[] = [];
   for (let i = 0; i < pageCount; i++) {
@@ -162,7 +163,7 @@ function registerDoc(doc: mupdf.Document, bytes: Uint8Array, password?: string):
   const docId = nextDocId++;
   // Undo and redo of annotation and form edits.
   doc.asPDF()?.enableJournal();
-  docs.set(docId, newEntry(doc, bytes, password));
+  docs.set(docId, newEntry(doc, bytes, password, ownerPassword));
   return { docId, pageCount, pages, title, outline, isPdf: doc.asPDF() !== null };
 }
 
@@ -190,6 +191,12 @@ function buildPdf(refs: PageRef[], prefer?: number): Uint8Array {
 
   const baseId = pickBase(refs, prefer);
   getPdf(baseId); // make sure it is a PDF
+  // Pages of a document with restrictions may be organized only when its author allows
+  // it; taking them into another document is copying, too.
+  for (const docId of new Set(refs.map((r) => r.docId))) {
+    requireRight(docId, "assemble");
+    if (docId !== baseId) requireRight(docId, "copy");
+  }
   const base = openBytes(snapshot(baseId), "application/pdf", getEntry(baseId).password).asPDF()!;
   const graftMaps = new Map<number, mupdf.PDFGraftMap>();
   try {
@@ -294,24 +301,61 @@ function snapshot(docId: number): Uint8Array {
   return bytes;
 }
 
+const ALL_RIGHTS: DocRights = { print: true, copy: true, modify: true, annotate: true, fillForms: true, assemble: true };
+
+/**
+ * Rights given by the P value of the standard security handler. Since revision 3,
+ * filling in forms (bit 9) and assembling pages (bit 11) have bits of their own,
+ * the way Acrobat and qpdf read them.
+ */
+function rightsOf(bits: number, revision: number): DocRights {
+  const has = (bit: number) => (bits & bit) !== 0;
+  const modern = revision >= 3;
+  return {
+    print: has(4),
+    copy: has(16),
+    modify: has(8),
+    annotate: has(32),
+    fillForms: has(32) || (modern && has(256)),
+    assemble: modern ? has(1024) : has(8),
+  };
+}
+
 function securityOf(entry: DocEntry): SecurityInfo {
   const pdf = entry.doc.asPDF();
   const all: Permissions = { print: true, copy: true, edit: true };
   if (!pdf || !isEncrypted(entry.doc)) {
-    return { method: null, openPassword: false, permissions: all, canChange: !!pdf, pending: entry.protection };
+    return {
+      method: null,
+      openPassword: false,
+      permissions: all,
+      rights: ALL_RIGHTS,
+      canChange: !!pdf,
+      pending: entry.protection,
+    };
   }
   const info = entry.doc.getMetaData("encryption") ?? "";
   const m = /(\d+)-bit (\w+)/.exec(info);
-  const p = pdf.getTrailer().get("Encrypt").get("P");
+  const encrypt = pdf.getTrailer().get("Encrypt");
+  const p = encrypt.get("P");
+  const r = encrypt.get("R");
   const bits = p.isNumber() ? p.asNumber() : -1;
   const restricted = { print: (bits & 4) !== 0, copy: (bits & 16) !== 0, edit: (bits & 8) !== 0 };
   return {
     method: m ? `${m[2]} ${m[1]}-bit` : info,
     openPassword: !!entry.password,
     permissions: restricted,
+    rights: entry.owner ? ALL_RIGHTS : rightsOf(bits, r.isNumber() ? r.asNumber() : 2),
     canChange: entry.owner,
     pending: entry.protection,
   };
+}
+
+/** Refuses an action the restrictions of the document do not allow. */
+function requireRight(docId: number, right: keyof DocRights) {
+  if (!securityOf(getEntry(docId)).rights[right]) {
+    throw new CodedError(`Not allowed by the document's restrictions: ${right}`, "NOT_ALLOWED");
+  }
 }
 
 function getStext(docId: number, pageIndex: number): mupdf.StructuredText {
@@ -763,10 +807,11 @@ const handlers: { [M in EngineMethod]: Handler<M> } = {
 
   compose({ pages, base }) {
     const bytes = buildPdf(pages, base);
-    // The result stays encrypted like the base document, hence the same password.
-    const password = docs.get(pickBase(pages, base))?.password;
-    const doc = openBytes(bytes, "application/pdf", password);
-    return [registerDoc(doc, bytes, password)];
+    // The result stays encrypted like the base document, hence the same passwords
+    // (an entered permissions password keeps the restrictions lifted).
+    const baseEntry = docs.get(pickBase(pages, base));
+    const doc = openBytes(bytes, "application/pdf", baseEntry?.password);
+    return [registerDoc(doc, bytes, baseEntry?.password, baseEntry?.ownerPassword)];
   },
 
   buildPdf({ pages, base }) {
@@ -795,11 +840,13 @@ const handlers: { [M in EngineMethod]: Handler<M> } = {
   },
 
   editAnnot({ docId, page, edit }) {
+    requireRight(docId, "annotate");
     const id = editPage(docId, page, edit.op, (pg) => applyEdit(pg, edit));
     return [historyOf(docId, id)];
   },
 
   setField({ docId, page, id, value, toggle }) {
+    requireRight(docId, "fillForms");
     editPage(docId, page, "field", (pg) => {
       const w = findWidget(pg, id);
       if (toggle) w.toggle();
@@ -811,6 +858,7 @@ const handlers: { [M in EngineMethod]: Handler<M> } = {
   },
 
   redact({ docId, page, area }) {
+    requireRight(docId, "modify");
     editPage(docId, page, "redact", (pg) => redact(pg, area));
     getEntry(docId).rewrite = true;
     return [historyOf(docId)];
@@ -826,6 +874,7 @@ const handlers: { [M in EngineMethod]: Handler<M> } = {
   },
 
   editText({ docId, page, line, text }) {
+    requireRight(docId, "modify");
     const pdf = getPdf(docId);
     if (editPage(docId, page, "text", (pg) => replaceTextLine(pdf, pg, line, text))) {
       getEntry(docId).rewrite = true;

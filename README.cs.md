@@ -68,6 +68,10 @@ Aplikace je **česky** i **anglicky**; řídí se jazykem systému a přepnout j
 - **ochrana heslem** (tlačítko se zámkem): heslo k otevření dokumentu, omezení tisku, kopírování
   a změn chráněné heslem oprávnění, nebo obojí – šifrování AES 256 bitů při uložení; chráněný
   dokument lze s heslem oprávnění změnit nebo ochranu odstranit
+- **dodržování omezení** zabezpečených dokumentů jako v Adobe Acrobatu: když autor nepovoluje tisk,
+  kopírování (i export do obrázků a převzetí stránek do jiného PDF), úpravy, komentáře, vyplňování
+  formulářů nebo uspořádání stránek, tyto nástroje se vypnou a lišta řekne proč; „Odemknout…“
+  omezení heslem oprávnění zruší do zavření dokumentu
 - **klikací odkazy** – na jiné stránky dokumentu i na webové stránky
 - **nedávné soubory** na úvodní obrazovce (desktop); dokument se znovu otevře na stránce, kde jste skončili
 - **tisk** (Ctrl+P) – všechny stránky, aktuální nebo rozsah; stránky na šířku zůstanou na šířku
@@ -95,7 +99,8 @@ a automatické testy) je v [anglickém README](README.md#development).
 
 Hotovo: **0.1** prohlížeč a export do obrázků · **0.2** uspořádání stránek, slučování, rozdělení,
 ukládání · **0.3** tisk, karty, angličtina · **0.4** komentáře, formuláře, podpisy, odkazy,
-nedávné soubory · **0.5** začernění, oprava textu po řádcích, ochrana heslem a oprávnění
+nedávné soubory · **0.5** začernění, oprava textu po řádcích, ochrana heslem a oprávnění ·
+**0.5.1** dodržování omezení zabezpečených dokumentů
 
 **Později**, zhruba v tomto pořadí:
 

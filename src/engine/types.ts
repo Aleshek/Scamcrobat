@@ -171,6 +171,24 @@ export interface Protection {
   permissions: Permissions;
 }
 
+/**
+ * What may be done with a document right now, by the permission bits of its protection
+ * (all true when it is not restricted or its permissions password was entered).
+ */
+export interface DocRights {
+  print: boolean;
+  /** Copying text, exporting pages as images, taking pages into other documents */
+  copy: boolean;
+  /** Changing the content: correcting text, blacking out */
+  modify: boolean;
+  /** Comments, highlights, drawings, signatures */
+  annotate: boolean;
+  /** Filling in form fields */
+  fillForms: boolean;
+  /** Organizing pages: reordering, rotating, deleting, inserting */
+  assemble: boolean;
+}
+
 export interface SecurityInfo {
   /** Encryption of the document as it is now, e.g. "AES 256-bit"; null = none */
   method: string | null;
@@ -178,6 +196,8 @@ export interface SecurityInfo {
   openPassword: boolean;
   /** What is allowed without the permissions password (all true when not restricted) */
   permissions: Permissions;
+  /** What is allowed now: `permissions` in detail, or everything once the permissions password is known */
+  rights: DocRights;
   /** The protection can be changed: the document has no restrictions or the permissions password is known */
   canChange: boolean;
   /** Protection to apply at the next save: undefined = keep as it is, null = remove */

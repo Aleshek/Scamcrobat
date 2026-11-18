@@ -4,8 +4,19 @@
  * tabs keeps the scroll position; inactive tabs are hidden and release their rendered pages.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { LockKeyhole, X } from "lucide-react";
 import type { PdfEngine } from "./engine/engine";
-import type { AnnotEdit, EditState, RedactArea, Rect, SearchHit, TextLine, TextSelection } from "./engine/types";
+import type {
+  AnnotEdit,
+  DocRights,
+  EditState,
+  RedactArea,
+  Rect,
+  SearchHit,
+  SecurityInfo,
+  TextLine,
+  TextSelection,
+} from "./engine/types";
 import { AnnotateBar } from "./annotate/AnnotateBar";
 import { EditContext, type AnnotRef, type Draft, type EditApi } from "./annotate/context";
 import { SignatureDialog } from "./annotate/SignatureDialog";
@@ -21,7 +32,7 @@ import {
   type ToolSettings,
 } from "./annotate/tools";
 import { ProtectDialog } from "./components/ProtectDialog";
-import { Toolbar } from "./components/Toolbar";
+import { Toolbar, type BlockableAction } from "./components/Toolbar";
 import { Sidebar } from "./components/Sidebar";
 import { ExportDialog } from "./export/ExportDialog";
 import { PrintDialog } from "./print/PrintDialog";
@@ -31,7 +42,7 @@ import { copyToClipboard } from "./clipboard";
 import { errorText } from "./errors";
 import { useT } from "./i18n";
 import { lastPage, rememberPage } from "./recent";
-import type { OpenDoc } from "./tabs";
+import { isRestricted, type OpenDoc } from "./tabs";
 
 type FitMode = "width" | "page" | null;
 
@@ -58,6 +69,8 @@ interface Props {
   onEdited(): void;
   /** Something was blacked out (saving it removes the content for good). */
   onRedacted(): void;
+  /** The protection changed or the restrictions were lifted with the permissions password. */
+  onSecurity(security: SecurityInfo): void;
   onToast(message: string): void;
   onError(message: string): void;
 }
@@ -65,10 +78,16 @@ interface Props {
 /** Opening links from documents: only web pages and e-mail. */
 const SAFE_URI = /^(https?:|mailto:)/i;
 
+/** The rights named in the notice of a secured document, in this order. */
+const NOTICE_RIGHTS = ["print", "copy", "modify", "annotate", "fillForms", "assemble"] as const;
+const CHANGE_RIGHTS = ["modify", "annotate", "fillForms", "assemble"] as const;
+
 export function DocView(props: Props) {
   const { engine, doc, active, onToggleSidebar, onToast, onError } = props;
   const info = doc.info;
   const t = useT();
+  /** What the document's restrictions allow (everything once unlocked) */
+  const rights: DocRights = doc.security.rights;
   const viewerRef = useRef<ViewerHandle>(null);
   const searchRef = useRef<HTMLInputElement>(null);
 
@@ -78,7 +97,8 @@ export function DocView(props: Props) {
   const [currentPage, setCurrentPage] = useState(0);
   const [search, setSearch] = useState<SearchState>(NO_SEARCH);
   const [selection, setSelection] = useState<TextSelection | null>(null);
-  const [dialog, setDialog] = useState<"export" | "print" | "protect" | null>(null);
+  const [dialog, setDialog] = useState<"export" | "print" | "protect" | "unlock" | null>(null);
+  const [noticeHidden, setNoticeHidden] = useState(false);
   const currentPageRef = useRef(currentPage);
   currentPageRef.current = currentPage;
   const selectionRef = useRef(selection);
@@ -90,6 +110,9 @@ export function DocView(props: Props) {
   // ---------- Annotations and forms ----------
 
   const canEdit = info.isPdf;
+  const canAnnotate = canEdit && rights.annotate;
+  const canModify = canEdit && rights.modify;
+  const canFillForms = canEdit && rights.fillForms;
   /** The second toolbar row: annotation tools, or editing tools (text, redaction) */
   const [bar, setBar] = useState<"annotate" | "edit" | null>(null);
   const [tool, setTool] = useState<Tool>("select");
@@ -311,7 +334,9 @@ export function DocView(props: Props) {
     () => ({
       engine,
       docId: info.docId,
-      canEdit,
+      canAnnotate,
+      canModify,
+      canFillForms,
       tool: activeTool,
       settings,
       signature,
@@ -345,7 +370,9 @@ export function DocView(props: Props) {
     [
       engine,
       info,
-      canEdit,
+      canAnnotate,
+      canModify,
+      canFillForms,
       activeTool,
       settings,
       signature,
@@ -459,12 +486,19 @@ export function DocView(props: Props) {
         searchRef.current?.select();
       } else if (ctrl && key === "e") {
         e.preventDefault();
-        setDialog("export");
+        if (rights.copy) setDialog("export");
+        else onToast(t.restrictions.copyBlocked);
       } else if (ctrl && key === "p") {
+        // (also keeps the browser from printing the window itself)
         e.preventDefault();
-        setDialog("print");
+        if (rights.print) setDialog("print");
+        else onToast(t.restrictions.printBlocked);
       } else if (ctrl && key === "c" && !inInput && selection?.text) {
         e.preventDefault();
+        if (!rights.copy) {
+          onToast(t.restrictions.copyBlocked);
+          return;
+        }
         copyToClipboard(selection.text).then(
           () => onToast(t.app.copied),
           () => onError(t.app.copyFailed),
@@ -508,12 +542,37 @@ export function DocView(props: Props) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [active, selection, search.query, runSearch, fit, info.pageCount, zoomStep, zoomTo, goToPage, onToggleSidebar, onToast, onError, t, canEdit, undoRedo, selected, edit, handleSelection]);
+  }, [active, selection, search.query, runSearch, fit, info.pageCount, zoomStep, zoomTo, goToPage, onToggleSidebar, onToast, onError, t, canEdit, undoRedo, selected, edit, handleSelection, rights]);
 
   const closeDialog = useCallback(() => {
     setDialog(null);
     viewerRef.current?.focus();
   }, []);
+
+  // ---------- Restrictions of a secured document ----------
+
+  const restricted = isRestricted(doc.security);
+  const blocked = useMemo(() => {
+    const r = t.restrictions;
+    const why = (text: string) => `${text}. ${r.unlockHint}`;
+    const list: Partial<Record<BlockableAction, string>> = {};
+    if (!rights.print) list.print = why(r.printBlocked);
+    if (!rights.copy) list.export = why(r.copyBlocked);
+    if (!rights.annotate) list.annotate = list.sign = why(r.annotateBlocked);
+    if (!rights.modify) list.edit = why(r.modifyBlocked);
+    if (!rights.assemble) list.organize = why(r.assembleBlocked);
+    return list;
+  }, [rights, t]);
+
+  /** What is not allowed, in words ("changes" when no change at all is allowed). */
+  const deniedText = () => {
+    const r = t.restrictions;
+    const noChanges = CHANGE_RIGHTS.every((k) => !rights[k]);
+    const shown: readonly (keyof DocRights)[] = noChanges ? ["print", "copy"] : NOTICE_RIGHTS;
+    const denied = shown.filter((k) => !rights[k]).map((k) => r[k]);
+    if (noChanges) denied.push(t.protect.changes);
+    return denied.join(", ");
+  };
 
   return (
     <section className={active ? "doc-view" : "doc-view inactive"} inert={!active}>
@@ -555,7 +614,28 @@ export function DocView(props: Props) {
         onSearch={runSearch}
         onSearchClear={() => setSearch(NO_SEARCH)}
         onExport={() => setDialog("export")}
+        blocked={blocked}
       />
+
+      {restricted && !noticeHidden && (
+        <div className="doc-notice" role="status">
+          <LockKeyhole size={16} className="muted" />
+          <span>{t.restrictions.notice(deniedText())}</span>
+          {info.isPdf && (
+            <button className="btn small" onClick={() => setDialog("unlock")} title={t.restrictions.unlockTitle}>
+              {t.restrictions.unlock}
+            </button>
+          )}
+          <button
+            className="doc-notice-close"
+            onClick={() => setNoticeHidden(true)}
+            title={t.restrictions.hide}
+            aria-label={t.restrictions.hide}
+          >
+            <X size={15} />
+          </button>
+        </div>
+      )}
 
       {bar && (
         <AnnotateBar
@@ -596,7 +676,7 @@ export function DocView(props: Props) {
       </main>
       </EditContext>
 
-      {active && dialog === "export" && (
+      {active && dialog === "export" && rights.copy && (
         <ExportDialog
           engine={engine}
           doc={info}
@@ -606,17 +686,22 @@ export function DocView(props: Props) {
           onClose={closeDialog}
         />
       )}
-      {active && dialog === "print" && (
+      {active && dialog === "print" && rights.print && (
         <PrintDialog engine={engine} doc={info} currentPage={currentPage} onClose={closeDialog} />
       )}
       {active && sigDialog && <SignatureDialog onClose={() => setSigDialog(null)} onUse={onSignatureChosen} />}
-      {active && dialog === "protect" && (
+      {active && (dialog === "protect" || dialog === "unlock") && (
         <ProtectDialog
           engine={engine}
           docId={info.docId}
+          unlockOnly={dialog === "unlock"}
           onChanged={(message) => {
             onEdited();
             onToast(message);
+          }}
+          onSecurity={props.onSecurity}
+          onUnlocked={() => {
+            if (restricted) onToast(t.restrictions.unlocked);
           }}
           onClose={closeDialog}
         />

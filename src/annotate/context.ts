@@ -18,8 +18,12 @@ export type Draft =
 export interface EditApi {
   engine: PdfEngine;
   docId: number;
-  /** Only PDFs can be annotated */
-  canEdit: boolean;
+  /** Comments and signatures can be added and changed (a PDF whose restrictions allow it) */
+  canAnnotate: boolean;
+  /** The content can be changed: correcting text, blacking out */
+  canModify: boolean;
+  /** Form fields can be filled in */
+  canFillForms: boolean;
   tool: Tool;
   settings: ToolSettings;
   /** The signature being placed (signature tool) */

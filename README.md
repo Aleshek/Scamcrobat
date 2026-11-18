@@ -67,6 +67,10 @@ switched on the start page.
 - **password protection** (the lock button): a password to open the document, restrictions of
   printing, copying and changes guarded by a permissions password, or both – AES 256-bit, applied
   when you save; a protected document can be changed or unprotected with its permissions password
+- **respecting restrictions** of secured documents, the way Adobe Acrobat does: when the author
+  does not allow printing, copying (also exporting to images and taking pages into another PDF),
+  editing, comments, filling in forms or organizing pages, those tools are turned off and a bar
+  says why; "Unlock…" lifts the restrictions with the permissions password until you close the document
 - **clickable links** – to other pages of the document and to web pages
 - **recent files** on the start page (desktop); a document reopens on the page where you left it
 - **printing** (Ctrl+P) – all pages, the current one or a range; landscape pages stay landscape
@@ -180,7 +184,10 @@ a text correction the document is saved as a full, garbage-collected rewrite (si
 before that become invalid, as with any rewrite). Password protection is a save option as well:
 MuPDF encrypts the rewritten file with AES-256 (open password, permissions password and the
 permission bits for printing, copying and changes); an encrypted document stays encrypted with
-its passwords when saved again.
+its passwords when saved again. The restrictions of an opened document are read from the same
+P value (since revision 3 with separate bits for filling in forms and assembling pages, read the
+way Acrobat and qpdf read them) and lifted once the permissions password is entered; the engine
+itself refuses edits they do not allow, so no part of the UI can get around them.
 
 Printing renders the chosen pages to images (150 or 300 DPI) and hands them to the system print
 dialog, one image per sheet, each sheet sized like its PDF page – the same approach the PDF
@@ -215,7 +222,8 @@ python pdf2jpg.py PDF             # one-off conversion of a folder of PDFs to JP
 
 Done: **0.1** viewer and export to images · **0.2** organizing pages, merging, splitting, saving ·
 **0.3** printing, tabs, English · **0.4** comments, forms, signatures, links, recent files ·
-**0.5** redaction, correcting text line by line, password protection and permissions
+**0.5** redaction, correcting text line by line, password protection and permissions ·
+**0.5.1** respecting the restrictions of secured documents
 
 **Later**, roughly in this order:
 

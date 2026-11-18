@@ -63,10 +63,15 @@ interface Props {
   onSearch(query: string, dir: 1 | -1): void;
   onSearchClear(): void;
   onExport(): void;
+  /** Actions the document's restrictions do not allow, with the reason shown as the tooltip */
+  blocked?: Partial<Record<BlockableAction, string>>;
 }
+
+export type BlockableAction = "print" | "export" | "annotate" | "edit" | "sign" | "organize";
 
 export function Toolbar(props: Props) {
   const { hasDoc, pageCount, currentPage, scale } = props;
+  const blocked = props.blocked ?? {};
   const t = useT();
   const ref = useRef<HTMLElement>(null);
   useFitLabels(ref, [t, hasDoc]);
@@ -90,7 +95,12 @@ export function Toolbar(props: Props) {
         <button className="tb-btn" onClick={props.onSaveAs} disabled={!hasDoc} title={t.toolbar.saveAs}>
           <SaveAll size={18} />
         </button>
-        <button className="tb-btn" onClick={props.onPrint} disabled={!hasDoc} title={t.toolbar.print}>
+        <button
+          className="tb-btn"
+          onClick={props.onPrint}
+          disabled={!hasDoc || !!blocked.print}
+          title={blocked.print ?? t.toolbar.print}
+        >
           <Printer size={18} />
         </button>
         <button
@@ -175,10 +185,10 @@ export function Toolbar(props: Props) {
 
       <button
         className={props.annotating ? "tb-btn toggled" : "tb-btn"}
-        disabled={!props.canAnnotate}
+        disabled={!props.canAnnotate || !!blocked.annotate}
         onClick={props.onAnnotate}
         aria-pressed={!!props.annotating}
-        title={hasDoc && !props.canAnnotate ? t.toolbar.organizePdfOnly : t.toolbar.annotateTitle}
+        title={hasDoc && !props.canAnnotate ? t.toolbar.organizePdfOnly : (blocked.annotate ?? t.toolbar.annotateTitle)}
       >
         <Highlighter size={18} />
         <span className="tb-text l3">{t.toolbar.annotate}</span>
@@ -186,10 +196,10 @@ export function Toolbar(props: Props) {
 
       <button
         className={props.editing ? "tb-btn toggled" : "tb-btn"}
-        disabled={!props.canAnnotate}
+        disabled={!props.canAnnotate || !!blocked.edit}
         onClick={props.onEdit}
         aria-pressed={!!props.editing}
-        title={hasDoc && !props.canAnnotate ? t.toolbar.organizePdfOnly : t.toolbar.editTitle}
+        title={hasDoc && !props.canAnnotate ? t.toolbar.organizePdfOnly : (blocked.edit ?? t.toolbar.editTitle)}
       >
         <FilePenLine size={18} />
         <span className="tb-text l3">{t.toolbar.edit}</span>
@@ -197,9 +207,9 @@ export function Toolbar(props: Props) {
 
       <button
         className="tb-btn"
-        disabled={!props.canAnnotate}
+        disabled={!props.canAnnotate || !!blocked.sign}
         onClick={props.onSign}
-        title={hasDoc && !props.canAnnotate ? t.toolbar.organizePdfOnly : t.toolbar.signTitle}
+        title={hasDoc && !props.canAnnotate ? t.toolbar.organizePdfOnly : (blocked.sign ?? t.toolbar.signTitle)}
       >
         <Signature size={18} />
         <span className="tb-text l3">{t.toolbar.sign}</span>
@@ -207,15 +217,20 @@ export function Toolbar(props: Props) {
 
       <button
         className="tb-btn"
-        disabled={!props.canOrganize}
+        disabled={!props.canOrganize || !!blocked.organize}
         onClick={props.onOrganize}
-        title={hasDoc && !props.canOrganize ? t.toolbar.organizePdfOnly : t.toolbar.organizeTitle}
+        title={hasDoc && !props.canOrganize ? t.toolbar.organizePdfOnly : (blocked.organize ?? t.toolbar.organizeTitle)}
       >
         <LayoutGrid size={18} />
         <span className="tb-text l2">{t.toolbar.organize}</span>
       </button>
 
-      <button className="tb-btn primary" disabled={!hasDoc} onClick={props.onExport} title={t.toolbar.exportTitle}>
+      <button
+        className="tb-btn primary"
+        disabled={!hasDoc || !!blocked.export}
+        onClick={props.onExport}
+        title={blocked.export ?? t.toolbar.exportTitle}
+      >
         <ImageDown size={18} />
         <span className="tb-text">{t.toolbar.export}</span>
       </button>

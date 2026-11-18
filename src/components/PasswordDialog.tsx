@@ -7,6 +7,8 @@ interface Props {
   fileName: string;
   /** The previous attempt was wrong */
   wrong: boolean;
+  /** The password to open the document, or its permissions password (to lift its restrictions) */
+  kind?: "open" | "permissions";
   onSubmit(password: string): void;
   onClose(): void;
 }
@@ -14,9 +16,11 @@ interface Props {
 export function PasswordDialog(props: Props) {
   const t = useT();
   const [value, setValue] = useState("");
+  const permissions = props.kind === "permissions";
+  const name = <strong>{props.fileName}</strong>;
   return (
     <Modal
-      title={t.app.passwordTitle}
+      title={permissions ? t.restrictions.pagesTitle : t.app.passwordTitle}
       onClose={props.onClose}
       footer={
         <>
@@ -24,14 +28,14 @@ export function PasswordDialog(props: Props) {
             {t.common.cancel}
           </button>
           <button className="btn primary" disabled={!value} onClick={() => props.onSubmit(value)}>
-            {t.common.open}
+            {permissions ? t.protect.unlock : t.common.open}
           </button>
         </>
       }
     >
       <div className="password-row">
         <Lock size={20} className="muted" />
-        <p>{t.app.passwordPrompt(<strong>{props.fileName}</strong>)}</p>
+        <p>{permissions ? t.restrictions.pagesPrompt(name) : t.app.passwordPrompt(name)}</p>
       </div>
       <input
         className={props.wrong ? "input wide invalid" : "input wide"}
@@ -40,7 +44,7 @@ export function PasswordDialog(props: Props) {
         autoFocus
         onChange={(e) => setValue(e.target.value)}
         onKeyDown={(e) => e.key === "Enter" && value && props.onSubmit(value)}
-        aria-label={t.app.password}
+        aria-label={permissions ? t.protect.permissionsPassword : t.app.password}
       />
       {props.wrong && <p className="hint error">{t.app.wrongPassword}</p>}
     </Modal>

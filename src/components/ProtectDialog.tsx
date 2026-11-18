@@ -14,14 +14,23 @@ import { Modal } from "./Modal";
 interface Props {
   engine: PdfEngine;
   docId: number;
+  /**
+   * Only lift the restrictions with the permissions password: the dialog closes once
+   * the password is accepted (otherwise it continues with changing the protection).
+   */
+  unlockOnly?: boolean;
   /** The protection was changed; `message` says when it takes effect. */
   onChanged(message: string): void;
+  /** New state of the protection (after unlocking or a change). */
+  onSecurity(info: SecurityInfo): void;
+  /** The restrictions were lifted with the permissions password. */
+  onUnlocked(): void;
   onClose(): void;
 }
 
 const ALL: Permissions = { print: true, copy: true, edit: true };
 
-export function ProtectDialog({ engine, docId, onChanged, onClose }: Props) {
+export function ProtectDialog({ engine, docId, unlockOnly, onChanged, onSecurity, onUnlocked, onClose }: Props) {
   const t = useT();
   const p = t.protect;
   const [info, setInfo] = useState<SecurityInfo | null>(null);
@@ -62,7 +71,14 @@ export function ProtectDialog({ engine, docId, onChanged, onClose }: Props) {
     setBusy(true);
     setError(null);
     try {
-      load(await engine.unlock(docId, unlockPassword));
+      const unlocked = await engine.unlock(docId, unlockPassword);
+      onSecurity(unlocked);
+      onUnlocked();
+      if (unlockOnly) {
+        onClose();
+        return;
+      }
+      load(unlocked);
     } catch (e) {
       setError(errorText(e));
     } finally {
@@ -91,7 +107,7 @@ export function ProtectDialog({ engine, docId, onChanged, onClose }: Props) {
     setBusy(true);
     setError(null);
     try {
-      await engine.protect(docId, protection);
+      onSecurity(await engine.protect(docId, protection));
       onChanged(protection ? p.applied : p.removed);
       onClose();
     } catch (e) {
@@ -168,7 +184,7 @@ export function ProtectDialog({ engine, docId, onChanged, onClose }: Props) {
 
   return (
     <Modal
-      title={p.title}
+      title={unlockOnly ? t.restrictions.dialogTitle : p.title}
       onClose={onClose}
       footer={
         locked ? (
@@ -205,7 +221,7 @@ export function ProtectDialog({ engine, docId, onChanged, onClose }: Props) {
 
       {locked ? (
         <>
-          <p className="hint">{p.locked}</p>
+          <p className="hint">{unlockOnly ? t.restrictions.dialogPrompt : p.locked}</p>
           <input
             className="input wide"
             type="password"

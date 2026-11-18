@@ -326,6 +326,36 @@ export const en = {
     removed: "The protection will be removed when you save the document",
   },
 
+  restrictions: {
+    notice: (list: string) => `Secured document – its author does not allow ${list}.`,
+    print: "printing",
+    copy: "copying",
+    modify: "editing",
+    annotate: "comments",
+    fillForms: "filling in forms",
+    assemble: "organizing pages",
+    unlock: "Unlock…",
+    unlockTitle: "Lift the restrictions with the permissions password",
+    hide: "Hide",
+    printBlocked: "Printing is not allowed in this document",
+    copyBlocked: "Copying content is not allowed in this document",
+    annotateBlocked: "Comments and signatures are not allowed in this document",
+    modifyBlocked: "Editing is not allowed in this document",
+    assembleBlocked: "Organizing pages is not allowed in this document",
+    unlockHint: "Unlock it with the permissions password.",
+    dialogTitle: "Unlock the document",
+    dialogPrompt: "Enter the permissions password to lift the restrictions until you close the document.",
+    unlocked: "Restrictions lifted until you close the document",
+    pagesTitle: "Secured document",
+    pagesPrompt: (name: ReactNode) => (
+      <>
+        The author of {name} does not allow using its pages in another document. Enter its permissions password to
+        unlock it.
+      </>
+    ),
+    pagesLocked: (name: string) => `“${name}” – its author does not allow using its pages in another document`,
+  },
+
   errors: {
     NO_DOC: "The document is not open",
     NO_ANNOT: "The annotation no longer exists",
@@ -337,6 +367,7 @@ export const en = {
     WORKER: "The PDF engine has stopped working. Please restart the application.",
     GLYPH_MISSING: "No available font can write the character “%s”",
     LINE_CHANGED: "The line has changed in the meantime – please try again",
+    NOT_ALLOWED: "The document's restrictions do not allow this",
     saveInPlaceDesktopOnly: "Saving in place is only available in the desktop app",
     clipboardUnavailable: "The clipboard is not available",
   } as Record<string, string> & {

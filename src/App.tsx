@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { FileUp, LoaderCircle } from "lucide-react";
 import { PdfEngine } from "./engine/engine";
-import { EngineError, type DocInfo } from "./engine/types";
+import { EngineError, type DocInfo, type SecurityInfo } from "./engine/types";
 import { TabBar } from "./components/TabBar";
 import { ChoiceDialog, type ChoiceRequest } from "./components/ChoiceDialog";
 import { PasswordDialog } from "./components/PasswordDialog";
@@ -94,6 +94,7 @@ export function App() {
   const [passwordAsk, setPasswordAsk] = useState<{
     name: string;
     wrong: boolean;
+    kind: "open" | "permissions";
     resolve(value: string | null): void;
   } | null>(null);
   const [choice, setChoice] = useState<(ChoiceRequest & { resolve(value: string): void }) | null>(null);
@@ -115,8 +116,8 @@ export function App() {
   );
 
   const askPassword = useCallback(
-    (name: string, wrong: boolean) =>
-      new Promise<string | null>((resolve) => setPasswordAsk({ name, wrong, resolve })),
+    (name: string, wrong: boolean, kind: "open" | "permissions" = "open") =>
+      new Promise<string | null>((resolve) => setPasswordAsk({ name, wrong, kind, resolve })),
     [],
   );
 
@@ -164,6 +165,8 @@ export function App() {
             if (!info) continue;
             const doc: OpenDoc = {
               info,
+              // Known before the document shows, so its restrictions apply from the start.
+              security: await engine.security(info.docId),
               name: file.name,
               path: file.path,
               dir: file.path ? dirname(file.path) : undefined,
@@ -179,7 +182,7 @@ export function App() {
         setLoading(false);
       }
     },
-    [openInEngine, activate, commit, t],
+    [engine, openInEngine, activate, commit, t],
   );
   const openFilesRef = useRef(openFiles);
   openFilesRef.current = openFiles;
@@ -232,6 +235,8 @@ export function App() {
       }
       try {
         const data = await engine.getBytes(d.info.docId);
+        // A new protection is applied by now (an entered permissions password stays valid).
+        const security = await engine.security(d.info.docId);
         let { name, path } = d;
         if (!asNew && path && isDesktop) {
           setBusy(t.app.saving);
@@ -246,7 +251,7 @@ export function App() {
         commit((s) =>
           setTabDoc(s, tabId, (cur) =>
             cur.info.docId === d.info.docId
-              ? { ...cur, name, path, dir: path ? dirname(path) : cur.dir, dirty: false, redacted: false }
+              ? { ...cur, security, name, path, dir: path ? dirname(path) : cur.dir, dirty: false, redacted: false }
               : cur,
           ),
         );
@@ -300,6 +305,13 @@ export function App() {
     [commit],
   );
 
+  /** The protection of a document changed, or its restrictions were lifted with the permissions password. */
+  const updateSecurity = useCallback(
+    (tabId: number, docId: number, security: SecurityInfo) =>
+      commit((s) => setTabDoc(s, tabId, (cur) => (cur.info.docId === docId ? { ...cur, security } : cur))),
+    [commit],
+  );
+
   /** Something was blacked out in a document. */
   const markRedacted = useCallback(
     (tabId: number) =>
@@ -312,35 +324,65 @@ export function App() {
 
   // ---------- Organizing pages ----------
 
+  /**
+   * Pages of a secured document may go into another one only when its author allows
+   * organizing pages and copying, or with its permissions password. False = not allowed.
+   */
+  const unlockPages = useCallback(
+    async (docId: number, name: string) => {
+      let security = await engine.security(docId);
+      let wrong = false;
+      while (!(security.rights.assemble && security.rights.copy)) {
+        const password = await askPassword(name, wrong, "permissions");
+        if (password === null) return false;
+        try {
+          security = await engine.unlock(docId, password);
+        } catch (e) {
+          if (!(e instanceof EngineError && e.code === "PASSWORD_WRONG")) throw e;
+          wrong = true;
+        }
+      }
+      return true;
+    },
+    [engine, askPassword],
+  );
+
   /** Opens files as page sources for the organizer. Reports errors and skips failed files. */
   const openSources = useCallback(
     async (files: OpenedFile[]) => {
       const opened: { info: DocInfo; file: OpenedFile }[] = [];
       const failed: string[] = [];
       for (const file of files) {
+        let info: DocInfo | null = null;
         try {
-          const info = await openInEngine(file);
+          info = await openInEngine(file);
           if (!info) continue;
           if (!info.isPdf) {
             void engine.close(info.docId);
             failed.push(t.app.notPdf(file.name));
             continue;
           }
+          if (!(await unlockPages(info.docId, file.name))) {
+            void engine.close(info.docId);
+            failed.push(t.restrictions.pagesLocked(file.name));
+            continue;
+          }
           opened.push({ info, file });
         } catch (e) {
+          if (info) void engine.close(info.docId);
           failed.push(`${file.name}: ${errorText(e)}`);
         }
       }
       if (failed.length) setError(t.app.someFailed(failed.join("; ")));
       return opened;
     },
-    [engine, openInEngine, t],
+    [engine, openInEngine, unlockPages, t],
   );
 
   const startOrganize = useCallback(() => {
     const tab = tabsRef.current.tabs.find((x) => x.id === tabsRef.current.activeId);
     const d = tab?.doc;
-    if (!tab || !d?.info.isPdf) return;
+    if (!tab || !d?.info.isPdf || !d.security.rights.assemble) return;
     setOrganize({
       id: Date.now(),
       tabId: tab.id,
@@ -404,6 +446,7 @@ export function App() {
         const info = await engine.compose(result.pages, result.base);
         const next: OpenDoc = {
           info,
+          security: await engine.security(info.docId),
           name: old ? old.name : `${session.baseName}.pdf`,
           path: old?.path,
           dir: old?.dir ?? session.baseDir,
@@ -630,6 +673,7 @@ export function App() {
               onOrganize={startOrganize}
               onEdited={() => markEdited(tab.id)}
               onRedacted={() => markRedacted(tab.id)}
+              onSecurity={(security) => updateSecurity(tab.id, tab.doc!.info.docId, security)}
               onToast={setToast}
               onError={setError}
             />
@@ -688,9 +732,10 @@ export function App() {
 
       {passwordAsk && (
         <PasswordDialog
-          key={`${passwordAsk.name}:${passwordAsk.wrong}`}
+          key={`${passwordAsk.kind}:${passwordAsk.name}:${passwordAsk.wrong}`}
           fileName={passwordAsk.name}
           wrong={passwordAsk.wrong}
+          kind={passwordAsk.kind}
           onSubmit={(p) => {
             setPasswordAsk(null);
             passwordAsk.resolve(p);

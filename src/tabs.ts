@@ -1,8 +1,10 @@
-import type { DocInfo } from "./engine/types";
+import type { DocInfo, SecurityInfo } from "./engine/types";
 
 /** A document open in a tab. */
 export interface OpenDoc {
   info: DocInfo;
+  /** Its protection and what its restrictions allow (updated after unlocking or saving) */
+  security: SecurityInfo;
   name: string;
   /** Path of the file on disk (desktop only) – where it gets saved */
   path?: string;
@@ -45,6 +47,9 @@ export function placeDoc(s: TabsState, doc: OpenDoc): [TabsState, number] {
 export function setTabDoc(s: TabsState, id: number, update: (doc: OpenDoc) => OpenDoc): TabsState {
   return { ...s, tabs: s.tabs.map((x) => (x.id === id && x.doc ? { ...x, doc: update(x.doc) } : x)) };
 }
+
+/** Is anything not allowed by the document's restrictions? */
+export const isRestricted = (security: SecurityInfo) => Object.values(security.rights).some((allowed) => !allowed);
 
 /** Removes a tab; the tab to its right (or the last one) becomes active. Never leaves zero tabs. */
 export function removeTab(s: TabsState, id: number): TabsState {

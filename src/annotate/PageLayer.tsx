@@ -320,13 +320,8 @@ export function PageLayer({ index, info, scale, extras, settled }: Props) {
   ];
 
   const capture =
-    ctx.canEdit &&
-    (tool === "ink" ||
-      tool === "note" ||
-      tool === "text" ||
-      tool === "edittext" ||
-      tool === "redactarea" ||
-      (tool === "signature" && ctx.signature));
+    (ctx.canAnnotate && (tool === "ink" || tool === "note" || tool === "text" || (tool === "signature" && ctx.signature))) ||
+    (ctx.canModify && (tool === "edittext" || tool === "redactarea"));
 
   const sigAspect = ctx.signature ? ctx.signature.width / ctx.signature.height : 1;
   const inkColor = cssColor(colorOf(ctx.settings.colors.ink));
@@ -352,7 +347,7 @@ export function PageLayer({ index, info, scale, extras, settled }: Props) {
         ))}
 
       {tool === "select" &&
-        ctx.canEdit &&
+        ctx.canAnnotate &&
         annots.map((a) => {
           if (MARKUP_TYPES.has(a.type) && a.quads) {
             return a.quads.map((q, j) => (
@@ -379,7 +374,7 @@ export function PageLayer({ index, info, scale, extras, settled }: Props) {
           );
         })}
 
-      {tool === "select" && ctx.canEdit && annots.some((a) => a.ink) && (
+      {tool === "select" && ctx.canAnnotate && annots.some((a) => a.ink) && (
         <svg className="pl-svg">
           {annots
             .filter((a) => a.ink)
@@ -396,7 +391,7 @@ export function PageLayer({ index, info, scale, extras, settled }: Props) {
       )}
 
       {tool === "select" &&
-        ctx.canEdit &&
+        ctx.canFillForms &&
         extras?.widgets.map((w) => <Field key={`w${w.id}:${w.value}`} w={w} index={index} scale={scale} box={box} ctx={ctx} />)}
 
       {selected && !draft && (
@@ -448,7 +443,7 @@ export function PageLayer({ index, info, scale, extras, settled }: Props) {
       {area && <div className={area.done ? "pl-redact done" : "pl-redact"} style={box(rectOf(area.from, area.to))} />}
 
       {tool === "edittext" &&
-        ctx.canEdit &&
+        ctx.canModify &&
         lines.map((line, i) =>
           line === editing?.line ? null : (
             <div
@@ -660,7 +655,8 @@ function Field(props: { w: WidgetInfo; index: number; scale: number; box(r: Rect
     );
   }
 
-  // Signature field: place a signature image into it.
+  // Signature field: place a signature image into it (an annotation, so the restrictions must allow those).
+  if (!ctx.canAnnotate) return null;
   return (
     <button className="pl-field sign" style={style} onMouseDown={stop} onClick={() => ctx.signField(index, w.rect)}>
       {t.annotate.signField}

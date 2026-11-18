@@ -326,6 +326,35 @@ export const cs: Messages = {
     removed: "Ochrana se odstraní při uložení dokumentu",
   },
 
+  restrictions: {
+    notice: (list) => `Zabezpečený dokument – autor nepovoluje ${list}.`,
+    print: "tisk",
+    copy: "kopírování",
+    modify: "úpravy",
+    annotate: "komentáře",
+    fillForms: "vyplňování formulářů",
+    assemble: "uspořádání stránek",
+    unlock: "Odemknout…",
+    unlockTitle: "Zrušit omezení heslem oprávnění",
+    hide: "Skrýt",
+    printBlocked: "Tisk tohoto dokumentu není povolen",
+    copyBlocked: "Kopírování obsahu tohoto dokumentu není povoleno",
+    annotateBlocked: "Komentáře a podpisy nejsou v tomto dokumentu povoleny",
+    modifyBlocked: "Úpravy tohoto dokumentu nejsou povoleny",
+    assembleBlocked: "Uspořádání stránek tohoto dokumentu není povoleno",
+    unlockHint: "Odemkněte ho heslem oprávnění.",
+    dialogTitle: "Odemknout dokument",
+    dialogPrompt: "Zadejte heslo oprávnění. Omezení se zruší do zavření dokumentu.",
+    unlocked: "Omezení zrušena do zavření dokumentu",
+    pagesTitle: "Zabezpečený dokument",
+    pagesPrompt: (name) => (
+      <>
+        Autor souboru {name} nepovoluje použít jeho stránky v jiném dokumentu. Pro odemčení zadejte heslo oprávnění.
+      </>
+    ),
+    pagesLocked: (name) => `„${name}“ – autor nepovoluje použít jeho stránky v jiném dokumentu`,
+  },
+
   errors: {
     NO_DOC: "Dokument není otevřený",
     NO_ANNOT: "Komentář už neexistuje",
@@ -337,6 +366,7 @@ export const cs: Messages = {
     WORKER: "PDF jádro přestalo fungovat. Restartujte prosím aplikaci.",
     GLYPH_MISSING: "Znak „%s“ neumí napsat žádné dostupné písmo",
     LINE_CHANGED: "Řádek se mezitím změnil – zkuste to prosím znovu",
+    NOT_ALLOWED: "Omezení dokumentu tuto akci nepovolují",
     saveInPlaceDesktopOnly: "Ukládání na místo je dostupné jen v desktopové aplikaci",
     clipboardUnavailable: "Schránka není dostupná",
   },

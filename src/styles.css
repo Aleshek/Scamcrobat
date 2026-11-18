@@ -286,6 +286,40 @@ input {
   border-bottom: 1px solid var(--border);
 }
 
+/* Secured document: what its restrictions do not allow */
+.doc-notice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 8px 5px 12px;
+  background: var(--accent-soft);
+  color: var(--text);
+  border-bottom: 1px solid var(--border);
+}
+
+.doc-notice > span {
+  flex: 1;
+  min-width: 0;
+}
+
+.doc-notice-close {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.doc-notice-close:hover {
+  background: var(--surface);
+  color: var(--text);
+}
+
 /* ---------- Sidebar ---------- */
 
 .sidebar {
