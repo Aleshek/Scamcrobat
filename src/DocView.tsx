@@ -4,12 +4,14 @@
  * tabs keeps the scroll position; inactive tabs are hidden and release their rendered pages.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { LockKeyhole, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, LockKeyhole, Minimize, X } from "lucide-react";
 import type { PdfEngine } from "./engine/engine";
 import type {
   AnnotEdit,
   DocRights,
   EditState,
+  PageInfo,
+  PageMode,
   RedactArea,
   Rect,
   SearchHit,
@@ -35,12 +37,25 @@ import { ProtectDialog } from "./components/ProtectDialog";
 import { Toolbar, type BlockableAction } from "./components/Toolbar";
 import { Sidebar } from "./components/Sidebar";
 import { ExportDialog } from "./export/ExportDialog";
+import { CropDialog } from "./pagetools/CropDialog";
+import { PageNumbersDialog } from "./pagetools/PageNumbersDialog";
+import { WatermarkDialog } from "./pagetools/WatermarkDialog";
 import { PrintDialog } from "./print/PrintDialog";
 import { Viewer, type ViewerHandle } from "./viewer/Viewer";
-import { clampScale, CSS_PX_PER_PT_AT_100, fitScale, nextZoomStep, percentToScale } from "./viewer/layout";
+import {
+  clampScale,
+  CSS_PX_PER_PT_AT_100,
+  fitScale,
+  nextZoomStep,
+  normalizeViewRotation,
+  percentToScale,
+  rotatePages,
+  rowStart,
+} from "./viewer/layout";
 import { copyToClipboard } from "./clipboard";
 import { errorText } from "./errors";
 import { useT } from "./i18n";
+import { isDesktop } from "./platform";
 import { lastPage, rememberPage } from "./recent";
 import { isRestricted, type OpenDoc } from "./tabs";
 
@@ -71,6 +86,10 @@ interface Props {
   onRedacted(): void;
   /** The protection changed or the restrictions were lifted with the permissions password. */
   onSecurity(security: SecurityInfo): void;
+  /** The page sizes changed (cropping, or undoing it). */
+  onPages(pages: PageInfo[]): void;
+  /** Full screen started / ended (the window hides everything else). */
+  onPresenting(on: boolean): void;
   onToast(message: string): void;
   onError(message: string): void;
 }
@@ -97,7 +116,19 @@ export function DocView(props: Props) {
   const [currentPage, setCurrentPage] = useState(0);
   const [search, setSearch] = useState<SearchState>(NO_SEARCH);
   const [selection, setSelection] = useState<TextSelection | null>(null);
-  const [dialog, setDialog] = useState<"export" | "print" | "protect" | "unlock" | null>(null);
+  const [dialog, setDialog] = useState<
+    "export" | "print" | "protect" | "unlock" | "crop" | "watermark" | "pageNumbers" | null
+  >(null);
+  /** Rotation of the view (clockwise); the file stays as it is */
+  const [rotation, setRotation] = useState(0);
+  /** One page per row, or two side by side (as the document asks for, at first) */
+  const [pageMode, setPageMode] = useState<PageMode>(info.pageMode ?? "single");
+  /** Full screen */
+  const [presenting, setPresenting] = useState(false);
+  const presentingRef = useRef(presenting);
+  presentingRef.current = presenting;
+  /** The box drawn with the crop tool, while the crop dialog is open */
+  const [crop, setCrop] = useState<{ page: number; rect: Rect; id: number } | null>(null);
   const [noticeHidden, setNoticeHidden] = useState(false);
   const currentPageRef = useRef(currentPage);
   currentPageRef.current = currentPage;
@@ -124,12 +155,21 @@ export function DocView(props: Props) {
   const [revs, setRevs] = useState<{ all: number; pages: Record<number, number> }>({ all: 0, pages: {} });
   /** Signature dialog; `field` = a signature form field to fill */
   const [sigDialog, setSigDialog] = useState<{ field?: { page: number; rect: Rect } } | null>(null);
-  const activeTool: Tool = bar ? tool : "select";
+  const activeTool: Tool = bar && !presenting ? tool : "select";
   const toolRef = useRef(activeTool);
   toolRef.current = activeTool;
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
-  const { onEdited, onRedacted } = props;
+  const { onEdited, onRedacted, onPages } = props;
+
+  /** A new edit history; cropping (or undoing it) also changes the page sizes. */
+  const applyState = useCallback(
+    (state: EditState) => {
+      setHistory(state);
+      if (state.pages) onPages(state.pages);
+    },
+    [onPages],
+  );
 
   const bumpPage = useCallback(
     (page: number) => setRevs((r) => ({ all: r.all, pages: { ...r.pages, [page]: (r.pages[page] ?? 0) + 1 } })),
@@ -210,7 +250,7 @@ export function DocView(props: Props) {
       if (!canEdit) return;
       try {
         const state = redo ? await engine.redo(info.docId) : await engine.undo(info.docId);
-        setHistory(state);
+        applyState(state);
         setSelected(null);
         setDraftState(null);
         bumpAll();
@@ -219,7 +259,7 @@ export function DocView(props: Props) {
         onError(t.annotate.editFailed(errorText(e)));
       }
     },
-    [canEdit, engine, info.docId, bumpAll, onEdited, onError, t],
+    [canEdit, engine, info.docId, applyState, bumpAll, onEdited, onError, t],
   );
 
   // After saving, the engine starts a new edit history (and may renumber objects).
@@ -361,6 +401,12 @@ export function DocView(props: Props) {
         void placeSignatureImage(signature, page, rect);
       },
       signField: (page, rect) => setSigDialog({ field: { page, rect } }),
+      crop,
+      startCrop: (page, rect) => {
+        // (a new box drawn while the dialog is open starts it again)
+        setCrop({ page, rect, id: Date.now() });
+        setDialog("crop");
+      },
       goToPage: (page) => viewerRef.current?.goToPage(page),
       openUri: (uri) => {
         if (SAFE_URI.test(uri)) window.open(uri, "_blank", "noopener,noreferrer");
@@ -384,6 +430,7 @@ export function DocView(props: Props) {
       editText,
       redact,
       placeSignatureImage,
+      crop,
     ],
   );
 
@@ -412,8 +459,10 @@ export function DocView(props: Props) {
 
   useEffect(() => {
     if (!fit || !viewport.width) return;
-    setScale(fitScale(info.pages, fit, viewport.width, viewport.height, currentPageRef.current));
-  }, [info, fit, viewport]);
+    const pages = rotatePages(info.pages, rotation);
+    const page = presenting ? -1 : currentPageRef.current;
+    setScale(fitScale(pages, fit, viewport.width, viewport.height, page, pageMode));
+  }, [info, fit, viewport, rotation, pageMode, presenting]);
 
   const zoomTo = useCallback((s: number) => {
     setFit(null);
@@ -426,6 +475,77 @@ export function DocView(props: Props) {
   const onViewport = useCallback((width: number, height: number) => setViewport({ width, height }), []);
 
   const goToPage = useCallback((i: number) => viewerRef.current?.goToPage(i), []);
+  /** To the next / previous page (or pair of pages side by side) */
+  const stepPage = useCallback((dir: 1 | -1) => viewerRef.current?.step(dir), []);
+
+  // ---------- View: rotation, pages side by side, full screen ----------
+
+  const rotateView = useCallback((dir: 1 | -1) => setRotation((r) => normalizeViewRotation(r + dir * 90)), []);
+
+  const { onPresenting } = props;
+  /** Zoom before full screen, restored after it */
+  const savedZoom = useRef<{ fit: FitMode; scale: number } | null>(null);
+
+  const startPresenting = useCallback(() => {
+    if (presentingRef.current) return;
+    savedZoom.current = { fit, scale };
+    setFit("page");
+    setPresenting(true);
+    onPresenting(true);
+    setSelected(null);
+    setDraftState(null);
+    handleSelection(null);
+    // (in the web version the browser may refuse; the window is then used as it is)
+    document.documentElement.requestFullscreen?.().catch(() => {});
+    onToast(t.view.fullscreenHint);
+  }, [fit, scale, onPresenting, handleSelection, onToast, t]);
+
+  const stopPresenting = useCallback(() => {
+    if (!presentingRef.current) return;
+    setPresenting(false);
+    onPresenting(false);
+    const saved = savedZoom.current;
+    savedZoom.current = null;
+    if (saved) {
+      setFit(saved.fit);
+      if (!saved.fit) setScale(saved.scale);
+    }
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    requestAnimationFrame(() => viewerRef.current?.focus());
+  }, [onPresenting]);
+
+  // Leaving the browser's full screen (Esc, F11) ends it here too; so does leaving the tab.
+  useEffect(() => {
+    if (!presenting) return;
+    const onChange = () => {
+      if (!document.fullscreenElement) stopPresenting();
+    };
+    document.addEventListener("fullscreenchange", onChange);
+    return () => document.removeEventListener("fullscreenchange", onChange);
+  }, [presenting, stopPresenting]);
+  useEffect(() => {
+    if (!active) stopPresenting();
+  }, [active, stopPresenting]);
+
+  // In full screen the controls show up when the mouse moves and hide after a while.
+  const [controlsShown, setControlsShown] = useState(true);
+  useEffect(() => {
+    if (!presenting) return;
+    let timer = 0;
+    const show = () => {
+      setControlsShown(true);
+      clearTimeout(timer);
+      timer = window.setTimeout(() => setControlsShown(false), 2500);
+    };
+    show();
+    window.addEventListener("mousemove", show);
+    window.addEventListener("mousedown", show);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener("mousemove", show);
+      window.removeEventListener("mousedown", show);
+    };
+  }, [presenting]);
 
   // ---------- Search ----------
 
@@ -470,6 +590,42 @@ export function DocView(props: Props) {
         e.target instanceof HTMLTextAreaElement ||
         e.target instanceof HTMLSelectElement;
       const key = e.key.toLowerCase();
+      const zoomKey =
+        ctrl && (key === "+" || key === "=" || key === "-" || key === "0" || e.code === "NumpadAdd" || e.code === "NumpadSubtract");
+
+      // Rotating the view: Ctrl+Shift+Plus / Minus (zooming has the same keys without Shift).
+      if (ctrl && e.shiftKey && !e.altKey) {
+        const right = key === "+" || key === "=" || e.code === "Equal" || e.code === "NumpadAdd";
+        const left = key === "-" || key === "_" || e.code === "Minus" || e.code === "NumpadSubtract";
+        if (right || left) {
+          e.preventDefault();
+          rotateView(right ? 1 : -1);
+          return;
+        }
+      }
+      // Full screen: Ctrl+L (as in other PDF viewers), in the desktop app also F11.
+      if ((ctrl && !e.shiftKey && !e.altKey && key === "l") || (key === "f11" && isDesktop)) {
+        e.preventDefault();
+        if (presentingRef.current) stopPresenting();
+        else startPresenting();
+        return;
+      }
+      if (presentingRef.current) {
+        const back =
+          key === "pageup" || key === "arrowup" || key === "arrowleft" || key === "backspace" || (key === " " && e.shiftKey);
+        const forward =
+          !back && (key === "pagedown" || key === "arrowdown" || key === "arrowright" || key === " " || key === "enter");
+        if (key === "escape") stopPresenting();
+        else if (forward || back) stepPage(forward ? 1 : -1);
+        else if (key === "home") goToPage(0);
+        else if (key === "end") goToPage(info.pageCount - 1);
+        else if (!zoomKey) return;
+        if (!zoomKey) {
+          e.preventDefault();
+          return;
+        }
+      }
+
       if (ctrl && !inInput && key === "z" && canEdit) {
         e.preventDefault();
         void undoRedo(e.shiftKey);
@@ -536,18 +692,40 @@ export function DocView(props: Props) {
       } else if (!inInput && !ctrl && (key === "arrowleft" || key === "arrowright")) {
         if (info.pageCount > 1 && fit === "page") {
           e.preventDefault();
-          goToPage(currentPageRef.current + (key === "arrowright" ? 1 : -1));
+          stepPage(key === "arrowright" ? 1 : -1);
         }
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [active, selection, search.query, runSearch, fit, info.pageCount, zoomStep, zoomTo, goToPage, onToggleSidebar, onToast, onError, t, canEdit, undoRedo, selected, edit, handleSelection, rights]);
+  }, [active, selection, search.query, runSearch, fit, info.pageCount, zoomStep, zoomTo, goToPage, stepPage, rotateView, startPresenting, stopPresenting, onToggleSidebar, onToast, onError, t, canEdit, undoRedo, selected, edit, handleSelection, rights]);
 
   const closeDialog = useCallback(() => {
     setDialog(null);
+    setCrop(null);
     viewerRef.current?.focus();
   }, []);
+
+  /** Cropping, a watermark or page numbers were applied to pages. */
+  const pageToolDone = useCallback(
+    (state: EditState, message: string) => {
+      applyState(state);
+      bumpAll();
+      onEdited();
+      closeDialog();
+      onToast(message);
+    },
+    [applyState, bumpAll, onEdited, closeDialog, onToast],
+  );
+  const previewCrop = useCallback((rect: Rect) => setCrop((c) => (c ? { ...c, rect } : c)), []);
+
+  /** The pages in view, as "3" or "3–4" (two side by side) */
+  const pagesInView = () => {
+    const first = currentPage;
+    const last =
+      pageMode === "single" || (pageMode === "cover" && first === 0) ? first : Math.min(first + 1, info.pageCount - 1);
+    return last > first ? `${first + 1}–${last + 1}` : String(first + 1);
+  };
 
   // ---------- Restrictions of a secured document ----------
 
@@ -575,7 +753,10 @@ export function DocView(props: Props) {
   };
 
   return (
-    <section className={active ? "doc-view" : "doc-view inactive"} inert={!active}>
+    <section
+      className={`doc-view${active ? "" : " inactive"}${presenting ? " presenting" : ""}${presenting && !controlsShown ? " idle" : ""}`}
+      inert={!active}
+    >
       <EditContext value={editApi}>
       <Toolbar
         hasDoc
@@ -608,6 +789,13 @@ export function DocView(props: Props) {
         onProtect={() => setDialog("protect")}
         onToggleSidebar={onToggleSidebar}
         onGoToPage={goToPage}
+        onStepPage={stepPage}
+        atLastPage={rowStart(currentPage, pageMode) >= rowStart(info.pageCount - 1, pageMode)}
+        rotation={rotation}
+        pageMode={pageMode}
+        onRotate={rotateView}
+        onPageMode={setPageMode}
+        onFullscreen={startPresenting}
         onZoomStep={zoomStep}
         onZoomPercent={(p) => zoomTo(percentToScale(p))}
         onFit={setFit}
@@ -648,6 +836,8 @@ export function DocView(props: Props) {
           onSettings={setSettings}
           onUndo={() => void undoRedo(false)}
           onRedo={() => void undoRedo(true)}
+          onWatermark={() => setDialog("watermark")}
+          onPageNumbers={() => setDialog("pageNumbers")}
           onClose={closeBar}
         />
       )}
@@ -662,6 +852,9 @@ export function DocView(props: Props) {
           doc={info}
           active={active}
           scale={scale}
+          rotation={rotation}
+          pageMode={pageMode}
+          presenting={presenting}
           hits={search.hits}
           activeHit={search.active}
           selection={selection}
@@ -673,6 +866,28 @@ export function DocView(props: Props) {
           onSelectionEnd={onSelectionEnd}
           onPagePress={onPagePress}
         />
+        {presenting && (
+          <div className="present-bar" role="toolbar" aria-label={t.view.fullscreen}>
+            <button className="tb-btn" onClick={() => stepPage(-1)} disabled={currentPage <= 0} title={t.toolbar.prevPage}>
+              <ChevronLeft size={18} />
+            </button>
+            <span className="present-page">
+              {pagesInView()} / {info.pageCount}
+            </span>
+            <button
+              className="tb-btn"
+              onClick={() => stepPage(1)}
+              disabled={rowStart(currentPage, pageMode) >= rowStart(info.pageCount - 1, pageMode)}
+              title={t.toolbar.nextPage}
+            >
+              <ChevronRight size={18} />
+            </button>
+            <button className="tb-btn" onClick={stopPresenting} title={t.view.exitFullscreen}>
+              <Minimize size={17} />
+              <span className="tb-text">{t.view.exitFullscreen}</span>
+            </button>
+          </div>
+        )}
       </main>
       </EditContext>
 
@@ -688,6 +903,37 @@ export function DocView(props: Props) {
       )}
       {active && dialog === "print" && rights.print && (
         <PrintDialog engine={engine} doc={info} currentPage={currentPage} onClose={closeDialog} />
+      )}
+      {active && dialog === "crop" && crop && (
+        <CropDialog
+          key={crop.id}
+          engine={engine}
+          doc={info}
+          page={crop.page}
+          rect={crop.rect}
+          rotation={rotation}
+          onPreview={previewCrop}
+          onDone={(state, n) => pageToolDone(state, t.crop.done(n))}
+          onClose={closeDialog}
+        />
+      )}
+      {active && dialog === "watermark" && canModify && (
+        <WatermarkDialog
+          engine={engine}
+          doc={info}
+          currentPage={currentPage}
+          onDone={(state, n) => pageToolDone(state, t.watermark.done(n))}
+          onClose={closeDialog}
+        />
+      )}
+      {active && dialog === "pageNumbers" && canModify && (
+        <PageNumbersDialog
+          engine={engine}
+          doc={info}
+          currentPage={currentPage}
+          onDone={(state, n) => pageToolDone(state, t.pageNumbers.done(n))}
+          onClose={closeDialog}
+        />
       )}
       {active && sigDialog && <SignatureDialog onClose={() => setSigDialog(null)} onUse={onSignatureChosen} />}
       {active && (dialog === "protect" || dialog === "unlock") && (

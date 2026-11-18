@@ -25,6 +25,9 @@ export interface OutlineNode {
   children: OutlineNode[];
 }
 
+/** How pages are laid out in the viewer: one below another, side by side, or side by side after a cover page. */
+export type PageMode = "single" | "two" | "cover";
+
 export interface DocInfo {
   docId: number;
   pageCount: number;
@@ -33,6 +36,8 @@ export interface DocInfo {
   outline: OutlineNode[];
   /** Only PDFs can be edited (MuPDF also opens XPS, EPUB, images…) */
   isPdf: boolean;
+  /** The page layout the document asks for when it opens (/PageLayout), if any */
+  pageMode?: PageMode;
 }
 
 /** A page of a source document used when composing a new PDF. */
@@ -42,6 +47,15 @@ export interface PageRef {
   page: number;
   /** Additional clockwise rotation, a multiple of 90 (may be negative or > 360) */
   rotate: number;
+}
+
+/**
+ * A document whose bookmarks go into a composed PDF under a top-level bookmark with
+ * this title (its file name), pointing to its first page.
+ */
+export interface OutlineFile {
+  docId: number;
+  title: string;
 }
 
 export type ImageFormat = "jpg" | "png" | "webp";
@@ -204,11 +218,40 @@ export interface SecurityInfo {
   pending?: Protection | null;
 }
 
+/** Distances from the edges of a page as it is shown (points). */
+export interface Margins {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+}
+
+export type StampPosition = "center" | "top-left" | "top-center" | "top-right" | "bottom-left" | "bottom-center" | "bottom-right";
+
+/** Text written into the content of pages: a watermark or page numbers. */
+export interface Stamp {
+  kind: "watermark" | "pageNumbers";
+  /** The text for each page (0-based index) */
+  texts: { page: number; text: string }[];
+  /** Font size in points */
+  size: number;
+  color: Color;
+  /** 0–1 */
+  opacity: number;
+  /** Counterclockwise, in degrees (only in the center) */
+  rotation: number;
+  position: StampPosition;
+  /** Behind the page content instead of over it */
+  under: boolean;
+}
+
 /** State of the edit history after a change; `id` = the annotation that was created. */
 export interface EditState {
   canUndo: boolean;
   canRedo: boolean;
   id?: number;
+  /** The new size of every page, when it changed (cropping, or undoing it) */
+  pages?: PageInfo[];
 }
 
 /** Requests the UI sends to the worker: name → [arguments, result] */
@@ -225,8 +268,11 @@ export interface EngineApi {
     { docId: number; page: number; from: Point; to: Point; mode: "chars" | "words" },
     { quads: Quad[]; text: string },
   ];
-  /** Builds a new PDF from pages and opens it right away as a new document. */
-  compose: [{ pages: PageRef[]; base?: number }, DocInfo];
+  /**
+   * Builds a new PDF from pages and opens it right away as a new document; the bookmarks
+   * of `files` go under a top-level bookmark for each of them.
+   */
+  compose: [{ pages: PageRef[]; base?: number; files?: OutlineFile[] }, DocInfo];
   /** Builds a new PDF from pages and returns its content (extract, split). */
   buildPdf: [{ pages: PageRef[]; base?: number }, Uint8Array];
   /** Content of an open document including all edits, for saving to disk. */
@@ -242,6 +288,10 @@ export interface EngineApi {
   textLines: [{ docId: number; page: number }, TextLine[]];
   /** Replaces the text of a line (`line` as returned by textLines). */
   editText: [{ docId: number; page: number; line: { bbox: Rect; text: string }; text: string }, EditState];
+  /** Crops pages: the visible area of each (its CropBox) shrinks by the margins. */
+  crop: [{ docId: number; pages: number[]; margins: Margins }, EditState];
+  /** Writes a watermark or page numbers into the content of pages. */
+  stamp: [{ docId: number; stamp: Stamp }, EditState];
   security: [{ docId: number }, SecurityInfo];
   /** Checks the permissions password, so the protection can be changed. */
   unlock: [{ docId: number; password: string }, SecurityInfo];

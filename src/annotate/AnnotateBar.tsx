@@ -1,11 +1,14 @@
-/** Second toolbar row with the annotation tools, or the editing tools (text, redaction). */
+/** Second toolbar row with the annotation tools, or the editing tools (text, redaction, page tools). */
 import {
+  Crop,
+  Hash,
   Highlighter,
   MousePointer2,
   PenLine,
   RectangleHorizontal,
   Redo2,
   Signature,
+  Stamp,
   StickyNote,
   Strikethrough,
   TextCursorInput,
@@ -29,6 +32,9 @@ interface Props {
   onUndo(): void;
   onRedo(): void;
   onClose(): void;
+  /** Watermark and page numbers dialogs (editing bar) */
+  onWatermark?(): void;
+  onPageNumbers?(): void;
 }
 
 export function AnnotateBar(props: Props) {
@@ -45,6 +51,7 @@ export function AnnotateBar(props: Props) {
         { id: "edittext", icon: <TextCursorInput size={17} />, label: a.editText, sep: true },
         { id: "redact", icon: <TextSelect size={17} />, label: a.redactText, sep: true },
         { id: "redactarea", icon: <RectangleHorizontal size={17} fill="currentColor" />, label: a.redactArea },
+        { id: "crop", icon: <Crop size={17} />, label: a.crop, sep: true },
       ]
     : [
         select,
@@ -78,6 +85,16 @@ export function AnnotateBar(props: Props) {
             </button>
           </span>
         ))}
+        {editing && (
+          <>
+            <button className="tb-btn" title={a.watermark} aria-label={a.watermark} onClick={props.onWatermark}>
+              <Stamp size={17} />
+            </button>
+            <button className="tb-btn" title={a.pageNumbers} aria-label={a.pageNumbers} onClick={props.onPageNumbers}>
+              <Hash size={17} />
+            </button>
+          </>
+        )}
       </div>
 
       {hasColor && (

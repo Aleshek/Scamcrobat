@@ -9,13 +9,24 @@ import {
   type Ref,
 } from "react";
 import { PRIORITY_NEARBY, PRIORITY_VISIBLE, type PdfEngine } from "../engine/engine";
-import type { DocInfo, Point, Quad, SearchHit, TextSelection } from "../engine/types";
-import { clampScale, computeLayout, pageAtY, visibleRange, type Layout } from "./layout";
+import type { DocInfo, PageMode, Point, Quad, SearchHit, TextSelection } from "../engine/types";
+import {
+  clampScale,
+  computeLayout,
+  pageAtY,
+  rotatePages,
+  rotatePoint,
+  unrotatePoint,
+  visibleRange,
+  type Layout,
+} from "./layout";
 import { PageView } from "./PageView";
 import type { Tool } from "../annotate/tools";
 
 export interface ViewerHandle {
   goToPage(index: number): void;
+  /** To the next / previous row of pages (two pages side by side are one row). */
+  step(dir: 1 | -1): void;
   revealHit(hit: SearchHit): void;
   focus(): void;
 }
@@ -27,6 +38,11 @@ interface Props {
   /** Inactive tab: keeps its scroll position but releases rendered pages. */
   active?: boolean;
   scale: number;
+  /** Rotation of the view (clockwise); the document stays as it is */
+  rotation: number;
+  pageMode: PageMode;
+  /** Full screen: one row of pages at a time, the wheel turns pages */
+  presenting: boolean;
   hits: SearchHit[];
   activeHit: number;
   selection: TextSelection | null;
@@ -46,20 +62,23 @@ interface Props {
 const CURRENT_PAGE_LINE = 0.4;
 
 export function Viewer(props: Props) {
-  const { engine, doc, scale, hits, activeHit, selection, onSelection, onViewport, onCurrentPage, onZoom } =
-    props;
+  const { engine, doc, scale, rotation, pageMode, presenting, hits, activeHit, selection } = props;
+  const { onSelection, onViewport, onCurrentPage, onZoom } = props;
   const containerRef = useRef<HTMLDivElement>(null);
   const [viewport, setViewport] = useState({ width: 0, height: 0 });
   const [scroll, setScroll] = useState({ top: 0, left: 0 });
   const lastScroll = useRef({ top: 0, left: 0 });
   const anchorRef = useRef<{ x: number; y: number } | null>(null);
   const prevLayout = useRef<{ docId: number; layout: Layout } | null>(null);
+  /** The current page as last reported (the first page of the row in view) */
+  const lastReportedPage = useRef(-1);
   const scaleRef = useRef(scale);
   scaleRef.current = scale;
 
+  const viewPages = useMemo(() => rotatePages(doc.pages, rotation), [doc.pages, rotation]);
   const layout = useMemo(
-    () => computeLayout(doc.pages, scale, viewport.width),
-    [doc.pages, scale, viewport.width],
+    () => computeLayout(viewPages, scale, viewport.width, pageMode, presenting ? viewport.height : 0),
+    [viewPages, scale, viewport.width, viewport.height, pageMode, presenting],
   );
   const layoutRef = useRef(layout);
   layoutRef.current = layout;
@@ -91,6 +110,16 @@ export function Viewer(props: Props) {
     }
     const old = prev.layout;
     if (old.scale === layout.scale || !old.tops.length) return;
+    // In full screen the slide of the current page fills the window.
+    if (presenting) {
+      const row = layout.rows[layout.rowOf[Math.max(0, lastReportedPage.current)] ?? 0];
+      if (row) el.scrollTop = row.top;
+      el.scrollLeft = Math.max(0, (layout.contentWidth - el.clientWidth) / 2);
+      anchorRef.current = null;
+      lastScroll.current = { top: el.scrollTop, left: el.scrollLeft };
+      setScroll(lastScroll.current);
+      return;
+    }
     // At the start of the document (e.g. right after opening) stay at the top, unless zooming with the wheel.
     if (!anchorRef.current && lastScroll.current.top === 0) {
       el.scrollLeft = Math.max(0, (layout.contentWidth - el.clientWidth) / 2);
@@ -110,7 +139,22 @@ export function Viewer(props: Props) {
     el.scrollLeft = layout.lefts[i] + fx * layout.widths[i] - ax;
     lastScroll.current = { top: el.scrollTop, left: el.scrollLeft };
     setScroll(lastScroll.current);
-  }, [layout, doc.docId]);
+  }, [layout, doc.docId, presenting]);
+
+  // Another arrangement of the pages (rotation, side by side, full screen): stay on the same page.
+  const arrangement = `${rotation}:${pageMode}:${presenting}`;
+  const lastArrangement = useRef(arrangement);
+  useLayoutEffect(() => {
+    if (lastArrangement.current === arrangement) return;
+    lastArrangement.current = arrangement;
+    const el = containerRef.current!;
+    const row = layout.rows[layout.rowOf[Math.max(0, lastReportedPage.current)] ?? 0];
+    if (!row) return;
+    el.scrollTop = presenting ? row.top : row.top - 8;
+    el.scrollLeft = Math.max(0, (layout.contentWidth - el.clientWidth) / 2);
+    lastScroll.current = { top: el.scrollTop, left: el.scrollLeft };
+    setScroll(lastScroll.current);
+  }, [arrangement, layout, presenting]);
 
   // Scrolling: rAF so that React does not re-render more often than the screen refreshes.
   useEffect(() => {
@@ -132,10 +176,27 @@ export function Viewer(props: Props) {
     };
   }, []);
 
-  // Ctrl + wheel (and the touchpad pinch gesture) = zoom around the cursor.
+  // Ctrl + wheel (and the touchpad pinch gesture) = zoom around the cursor;
+  // in full screen the wheel turns pages.
+  const stepRef = useRef<(dir: 1 | -1) => void>(() => {});
+  const presentingRef = useRef(presenting);
+  presentingRef.current = presenting;
   useEffect(() => {
     const el = containerRef.current!;
+    let wheel = 0;
+    let lastStep = 0;
     const onWheel = (e: WheelEvent) => {
+      if (presentingRef.current && !e.ctrlKey) {
+        e.preventDefault();
+        wheel += e.deltaMode === 1 ? e.deltaY * 33 : e.deltaY;
+        const now = performance.now();
+        if (Math.abs(wheel) >= 40 && now - lastStep > 250) {
+          stepRef.current(wheel > 0 ? 1 : -1);
+          lastStep = now;
+          wheel = 0;
+        }
+        return;
+      }
       if (!e.ctrlKey) return;
       e.preventDefault();
       const r = el.getBoundingClientRect();
@@ -151,7 +212,6 @@ export function Viewer(props: Props) {
 
   // Current page = the one crossed by a line at 40 % of the window height.
   // Reads the real position from the DOM (after a zoom change the state may be a frame behind).
-  const lastReportedPage = useRef(-1);
   useEffect(() => {
     const el = containerRef.current;
     if (!el || !layout.tops.length) return;
@@ -162,23 +222,49 @@ export function Viewer(props: Props) {
     }
   }, [scroll, layout, viewport.height, onCurrentPage]);
 
+  const goToPage = useCallback((index: number) => {
+    const el = containerRef.current;
+    const l = layoutRef.current;
+    if (!el || index < 0 || index >= l.tops.length) return;
+    const row = l.rows[l.rowOf[index]];
+    el.scrollTop = presentingRef.current ? row.top : row.top - 8;
+  }, []);
+
+  const step = useCallback(
+    (dir: 1 | -1) => {
+      const el = containerRef.current;
+      const l = layoutRef.current;
+      if (!el || !l.rows.length) return;
+      // (from the real position: the state may be a frame behind when stepping quickly)
+      const current = l.rowOf[pageAtY(l, el.scrollTop + el.clientHeight * CURRENT_PAGE_LINE)] ?? 0;
+      const next = Math.min(Math.max(current + dir, 0), l.rows.length - 1);
+      if (next !== current) goToPage(l.rows[next].first);
+    },
+    [goToPage],
+  );
+  stepRef.current = step;
+
   useImperativeHandle(
     props.ref,
     () => ({
-      goToPage(index) {
-        const el = containerRef.current;
-        const l = layoutRef.current;
-        if (!el || index < 0 || index >= l.tops.length) return;
-        el.scrollTop = l.tops[index] - 8;
-      },
+      goToPage,
+      step,
       revealHit(hit) {
         const el = containerRef.current;
         const l = layoutRef.current;
         const info = doc.pages[hit.page];
         if (!el || !info || !hit.quads.length) return;
         const q = hit.quads[0];
-        const y = l.tops[hit.page] + (Math.min(q[1], q[3]) - info.y0) * l.scale;
-        const x = l.lefts[hit.page] + (Math.min(q[0], q[4]) - info.x0) * l.scale;
+        const i = hit.page;
+        const [px, py] = rotatePoint(
+          (Math.min(q[0], q[4]) - info.x0) * l.scale,
+          (Math.min(q[1], q[3]) - info.y0) * l.scale,
+          rotation,
+          l.widths[i],
+          l.heights[i],
+        );
+        const y = l.tops[i] + py;
+        const x = l.lefts[i] + px;
         if (y < el.scrollTop + 40 || y > el.scrollTop + el.clientHeight - 60) {
           el.scrollTop = y - el.clientHeight / 3;
         }
@@ -190,7 +276,7 @@ export function Viewer(props: Props) {
         containerRef.current?.focus({ preventScroll: true });
       },
     }),
-    [doc.pages],
+    [doc.pages, rotation, goToPage, step],
   );
 
   // Text selection by dragging the mouse (within one page).
@@ -209,9 +295,10 @@ export function Viewer(props: Props) {
       const info = doc.pages[index];
       const toPdf = (clientX: number, clientY: number): Point => {
         const r = pageEl.getBoundingClientRect();
-        const s = r.width / info.width;
-        const x = Math.min(Math.max((clientX - r.left) / s, 0), info.width);
-        const y = Math.min(Math.max((clientY - r.top) / s, 0), info.height);
+        const s = (rotation % 180 ? r.height : r.width) / info.width;
+        const [u, v] = unrotatePoint(r, rotation, clientX, clientY);
+        const x = Math.min(Math.max(u / s, 0), info.width);
+        const y = Math.min(Math.max(v / s, 0), info.height);
         return [x + info.x0, y + info.y0];
       };
       const gen = ++selectionGen.current;
@@ -275,7 +362,7 @@ export function Viewer(props: Props) {
       window.addEventListener("mousemove", move);
       window.addEventListener("mouseup", up);
     },
-    [doc, engine, onSelection],
+    [doc, engine, rotation, onSelection],
   );
 
   // Search results grouped by page.
@@ -305,6 +392,7 @@ export function Viewer(props: Props) {
         index={i}
         info={doc.pages[i]}
         scale={scale}
+        rotation={rotation}
         top={layout.tops[i]}
         left={layout.lefts[i]}
         width={layout.widths[i]}
@@ -319,7 +407,11 @@ export function Viewer(props: Props) {
   }
 
   return (
-    <div ref={containerRef} className={`viewer tool-${props.tool ?? "select"}`} tabIndex={0}>
+    <div
+      ref={containerRef}
+      className={`viewer tool-${props.tool ?? "select"}${presenting ? " presenting" : ""}`}
+      tabIndex={0}
+    >
       <div className="viewer-content" style={{ width: layout.contentWidth, height: layout.contentHeight }}>
         {pages}
       </div>

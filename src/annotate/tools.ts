@@ -10,13 +10,14 @@ export type Tool =
   | "text"
   | "ink"
   | "signature"
-  // Editing the page content: correcting lines of text, blacking out (redaction)
+  // Editing the page content: correcting lines of text, blacking out (redaction), cropping pages
   | "edittext"
   | "redact"
-  | "redactarea";
+  | "redactarea"
+  | "crop";
 
 /** The tools of the editing bar (the rest belong to the annotation bar, "select" to both). */
-export const EDIT_TOOLS: Tool[] = ["edittext", "redact", "redactarea"];
+export const EDIT_TOOLS: Tool[] = ["edittext", "redact", "redactarea", "crop"];
 
 export const isEditTool = (tool: Tool) => EDIT_TOOLS.includes(tool);
 

@@ -9,9 +9,13 @@ interface Props {
   footer?: ReactNode;
   /** Prevents closing (e.g. while exporting) */
   locked?: boolean;
+  /** A wider dialog (fields with a preview next to them) */
+  wide?: boolean;
+  /** At the side, without dimming the window (what it changes stays visible) */
+  side?: boolean;
 }
 
-export function Modal({ title, onClose, children, footer, locked }: Props) {
+export function Modal({ title, onClose, children, footer, locked, wide, side }: Props) {
   const t = useT();
   const dialogRef = useRef<HTMLDivElement>(null);
 
@@ -37,8 +41,8 @@ export function Modal({ title, onClose, children, footer, locked }: Props) {
   }, [onClose, locked]);
 
   return (
-    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && !locked && onClose()}>
-      <div className="modal" role="dialog" aria-modal="true" aria-label={title} ref={dialogRef}>
+    <div className={side ? "modal-backdrop side" : "modal-backdrop"} onMouseDown={(e) => e.target === e.currentTarget && !locked && onClose()}>
+      <div className={wide ? "modal wide" : "modal"} role="dialog" aria-modal="true" aria-label={title} ref={dialogRef}>
         <div className="modal-head">
           <h2>{title}</h2>
           <button className="modal-close" onClick={onClose} disabled={locked} aria-label={t.common.close}>

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { FileUp, LoaderCircle } from "lucide-react";
 import { PdfEngine } from "./engine/engine";
-import { EngineError, type DocInfo, type SecurityInfo } from "./engine/types";
+import { EngineError, type DocInfo, type PageInfo, type SecurityInfo } from "./engine/types";
 import { TabBar } from "./components/TabBar";
 import { ChoiceDialog, type ChoiceRequest } from "./components/ChoiceDialog";
 import { PasswordDialog } from "./components/PasswordDialog";
@@ -102,6 +102,8 @@ export function App() {
   const [dragging, setDragging] = useState(false);
   const [organize, setOrganize] = useState<OrganizeSession | null>(null);
   const [organizeDirty, setOrganizeDirty] = useState(false);
+  /** A document is shown full screen (the tab bar is hidden) */
+  const [presenting, setPresenting] = useState(false);
 
   const organizeRef = useRef(organize);
   organizeRef.current = organize;
@@ -312,6 +314,15 @@ export function App() {
     [commit],
   );
 
+  /** The page sizes of a document changed (cropping, or undoing it). */
+  const updatePages = useCallback(
+    (tabId: number, docId: number, pages: PageInfo[]) =>
+      commit((s) =>
+        setTabDoc(s, tabId, (cur) => (cur.info.docId === docId ? { ...cur, info: { ...cur.info, pages } } : cur)),
+      ),
+    [commit],
+  );
+
   /** Something was blacked out in a document. */
   const markRedacted = useCallback(
     (tabId: number) =>
@@ -386,7 +397,9 @@ export function App() {
     setOrganize({
       id: Date.now(),
       tabId: tab.id,
-      sources: [{ docId: d.info.docId, name: d.name, path: d.path, owned: false }],
+      sources: [
+        { docId: d.info.docId, name: d.name, path: d.path, owned: false, hasOutline: d.info.outline.length > 0 },
+      ],
       pages: pagesFromDoc(d.info),
       isNew: false,
       title: d.name,
@@ -407,7 +420,13 @@ export function App() {
       setOrganize({
         id: Date.now(),
         tabId: null,
-        sources: opened.map(({ info, file }) => ({ docId: info.docId, name: file.name, path: file.path, owned: true })),
+        sources: opened.map(({ info, file }) => ({
+          docId: info.docId,
+          name: file.name,
+          path: file.path,
+          owned: true,
+          hasOutline: info.outline.length > 0,
+        })),
         pages: opened.flatMap((o) => pagesFromDoc(o.info)),
         isNew: true,
         title: t.app.mergeTitle,
@@ -443,7 +462,7 @@ export function App() {
       setBusy(t.app.composing);
       let targetId: number;
       try {
-        const info = await engine.compose(result.pages, result.base);
+        const info = await engine.compose(result.pages, result.base, result.files);
         const next: OpenDoc = {
           info,
           security: await engine.security(info.docId),
@@ -637,7 +656,7 @@ export function App() {
   // ---------- Rendering ----------
 
   return (
-    <div className="app">
+    <div className={presenting ? "app presenting" : "app"}>
       {showTabBar && (
         <TabBar
           tabs={tabs}
@@ -674,6 +693,8 @@ export function App() {
               onEdited={() => markEdited(tab.id)}
               onRedacted={() => markRedacted(tab.id)}
               onSecurity={(security) => updateSecurity(tab.id, tab.doc!.info.docId, security)}
+              onPages={(pages) => updatePages(tab.id, tab.doc!.info.docId, pages)}
+              onPresenting={setPresenting}
               onToast={setToast}
               onError={setError}
             />

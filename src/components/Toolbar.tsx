@@ -22,9 +22,11 @@ import {
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
+import type { PageMode } from "../engine/types";
 import { scaleToPercent } from "../viewer/layout";
 import { useT } from "../i18n";
 import { useFitLabels } from "./fitLabels";
+import { ViewMenu } from "./ViewMenu";
 
 interface Props {
   hasDoc: boolean;
@@ -57,6 +59,16 @@ interface Props {
   onProtect?(): void;
   onToggleSidebar(): void;
   onGoToPage(index: number): void;
+  /** To the next / previous page (or pair of pages side by side) */
+  onStepPage?(dir: 1 | -1): void;
+  /** The last page (or pair of pages) is in view */
+  atLastPage?: boolean;
+  /** View: rotation (clockwise), pages side by side, full screen */
+  rotation?: number;
+  pageMode?: PageMode;
+  onRotate?(dir: 1 | -1): void;
+  onPageMode?(mode: PageMode): void;
+  onFullscreen?(): void;
   onZoomStep(dir: 1 | -1): void;
   onZoomPercent(percent: number): void;
   onFit(mode: "width" | "page"): void;
@@ -129,7 +141,7 @@ export function Toolbar(props: Props) {
         <button
           className="tb-btn"
           disabled={!hasDoc || currentPage <= 0}
-          onClick={() => props.onGoToPage(currentPage - 1)}
+          onClick={() => (props.onStepPage ? props.onStepPage(-1) : props.onGoToPage(currentPage - 1))}
           title={t.toolbar.prevPage}
         >
           <ChevronLeft size={18} />
@@ -143,8 +155,8 @@ export function Toolbar(props: Props) {
         <span className="tb-muted">/ {hasDoc ? pageCount : "–"}</span>
         <button
           className="tb-btn"
-          disabled={!hasDoc || currentPage >= pageCount - 1}
-          onClick={() => props.onGoToPage(currentPage + 1)}
+          disabled={!hasDoc || (props.atLastPage ?? currentPage >= pageCount - 1)}
+          onClick={() => (props.onStepPage ? props.onStepPage(1) : props.onGoToPage(currentPage + 1))}
           title={t.toolbar.nextPage}
         >
           <ChevronRight size={18} />
@@ -177,6 +189,14 @@ export function Toolbar(props: Props) {
         >
           <Maximize size={17} />
         </button>
+        <ViewMenu
+          disabled={!hasDoc}
+          rotation={props.rotation ?? 0}
+          pageMode={props.pageMode ?? "single"}
+          onRotate={(dir) => props.onRotate?.(dir)}
+          onPageMode={(mode) => props.onPageMode?.(mode)}
+          onFullscreen={() => props.onFullscreen?.()}
+        />
       </div>
 
       <div className="tb-spacer" />

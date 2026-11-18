@@ -9,12 +9,15 @@ import {
   type EngineMethod,
   type EngineResponse,
   type ImageFormat,
+  type Margins,
+  type OutlineFile,
   type PageRef,
   type Point,
   type Protection,
   type RedactArea,
   type Rect,
   type RenderResult,
+  type Stamp,
 } from "./types";
 
 interface Pending {
@@ -123,10 +126,11 @@ export class PdfEngine {
 
   /**
    * Builds a new PDF from pages and opens it as a new document.
-   * `base` = the document whose bookmarks and metadata should be kept (if any of its pages remain).
+   * `base` = the document whose bookmarks and metadata should be kept (if any of its pages remain);
+   * the bookmarks of `files` go under a top-level bookmark named after each of them.
    */
-  compose(pages: PageRef[], base?: number) {
-    return this.call("compose", { pages, base });
+  compose(pages: PageRef[], base?: number, files?: OutlineFile[]) {
+    return this.call("compose", { pages, base, files });
   }
 
   /** Builds a new PDF from pages and returns its content. */
@@ -162,6 +166,16 @@ export class PdfEngine {
 
   editText(docId: number, page: number, line: { bbox: Rect; text: string }, text: string) {
     return this.call("editText", { docId, page, line, text });
+  }
+
+  /** Crops pages by margins (points) from the edges of each page as shown. */
+  crop(docId: number, pages: number[], margins: Margins) {
+    return this.call("crop", { docId, pages, margins });
+  }
+
+  /** Writes a watermark or page numbers into pages. */
+  stamp(docId: number, stamp: Stamp) {
+    return this.call("stamp", { docId, stamp });
   }
 
   security(docId: number) {

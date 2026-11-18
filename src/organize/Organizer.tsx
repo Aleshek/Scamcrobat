@@ -24,7 +24,7 @@ import {
   Undo2,
 } from "lucide-react";
 import { isAbortError, PRIORITY_THUMBNAIL, type PdfEngine } from "../engine/engine";
-import type { DocInfo, PageRef } from "../engine/types";
+import type { DocInfo, OutlineFile, PageRef } from "../engine/types";
 import { fileFromDrop, openFilesDialog, savePdfAs, type OpenedFile } from "../platform";
 import { errorText } from "../errors";
 import { useT } from "../i18n";
@@ -35,6 +35,7 @@ import {
   historyReducer,
   insertPages,
   movePages,
+  outlineFiles,
   pagesFromDoc,
   rotatePages,
   samePages,
@@ -52,6 +53,8 @@ export interface OrganizeResult {
   owned: number[];
   /** The original document – its bookmarks and metadata take precedence */
   base?: number;
+  /** Files whose bookmarks go under a bookmark named after the file */
+  files: OutlineFile[];
 }
 
 export interface OrganizerHandle {
@@ -153,6 +156,7 @@ export function Organizer(props: Props) {
       changed: props.isNew || !samePages(initialPages, pagesRef.current),
       owned: sourcesRef.current.filter((s) => s.owned).map((s) => s.docId),
       base: sourcesRef.current.find((s) => !s.owned)?.docId,
+      files: outlineFiles(sourcesRef.current, pagesRef.current, props.isNew),
     }),
     [props.isNew, initialPages],
   );
@@ -190,7 +194,13 @@ export function Organizer(props: Props) {
         if (!opened.length) return;
         setSources((s) => [
           ...s,
-          ...opened.map((o) => ({ docId: o.info.docId, name: o.file.name, path: o.file.path, owned: true })),
+          ...opened.map((o) => ({
+            docId: o.info.docId,
+            name: o.file.name,
+            path: o.file.path,
+            owned: true,
+            hasOutline: o.info.outline.length > 0,
+          })),
         ]);
         const added = opened.flatMap((o) => pagesFromDoc(o.info));
         const index = Math.min(at ?? insertIndex(), pagesRef.current.length);

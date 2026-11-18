@@ -2,7 +2,7 @@
  * Data model of the "Organize pages" mode: a list of pages (where each comes from, how it
  * is rotated) with undo/redo history. The real PDF is only built from it on confirmation.
  */
-import type { DocInfo, PageRef } from "../engine/types";
+import type { DocInfo, OutlineFile, PageRef } from "../engine/types";
 
 export interface OrgSource {
   docId: number;
@@ -10,6 +10,8 @@ export interface OrgSource {
   path?: string;
   /** The organizer opened this document (inserted PDF) – it must close it when done. */
   owned: boolean;
+  /** The document has bookmarks */
+  hasOutline: boolean;
 }
 
 export interface OrgPage {
@@ -22,6 +24,20 @@ export interface OrgPage {
   width: number;
   height: number;
   label: string;
+}
+
+/**
+ * Files whose bookmarks the composed PDF keeps under a bookmark named after the file:
+ * when merging, all files used; when inserting into a document, the inserted files that have bookmarks.
+ */
+export function outlineFiles(sources: OrgSource[], pages: OrgPage[], isNew: boolean): OutlineFile[] {
+  const used = new Set(pages.map((p) => p.docId));
+  const named = isNew
+    ? used.size > 1
+      ? sources.filter((s) => used.has(s.docId))
+      : []
+    : sources.filter((s) => s.owned && s.hasOutline && used.has(s.docId));
+  return named.map((s) => ({ docId: s.docId, title: s.name.replace(/\.pdf$/i, "") || s.name }));
 }
 
 export function pagesFromDoc(info: DocInfo): OrgPage[] {

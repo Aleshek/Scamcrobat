@@ -6,6 +6,7 @@
  */
 import * as mupdf from "mupdf";
 import { CodedError } from "./coded";
+import { stampPages } from "./stamp";
 import { readTextLines, replaceTextLine } from "./textedit";
 import type {
   AnnotEdit,
@@ -20,9 +21,12 @@ import type {
   EngineMethod,
   EngineRequest,
   EngineResponse,
+  Margins,
+  OutlineFile,
   OutlineNode,
   PageExtras,
   PageInfo,
+  PageMode,
   PageRef,
   Permissions,
   Point,
@@ -137,10 +141,10 @@ function newEntry(doc: mupdf.Document, bytes: Uint8Array, password?: string, own
   };
 }
 
-/** Registers an open document and returns information about it for the UI. */
-function registerDoc(doc: mupdf.Document, bytes: Uint8Array, password?: string, ownerPassword?: string): DocInfo {
-  const pageCount = doc.countPages();
+/** Size and label of every page (as shown: rotated and cropped). */
+function pageInfos(doc: mupdf.Document): PageInfo[] {
   const pages: PageInfo[] = [];
+  const pageCount = doc.countPages();
   for (let i = 0; i < pageCount; i++) {
     const page = doc.loadPage(i);
     const [x0, y0, x1, y1] = page.getBounds();
@@ -153,6 +157,29 @@ function registerDoc(doc: mupdf.Document, bytes: Uint8Array, password?: string, 
     pages.push({ x0, y0, width: x1 - x0, height: y1 - y0, label });
     page.destroy();
   }
+  return pages;
+}
+
+/** The page layout a PDF asks for when it opens (/PageLayout in its catalog). */
+function pageModeOf(doc: mupdf.Document): PageMode | undefined {
+  const pdf = doc.asPDF();
+  if (!pdf) return undefined;
+  try {
+    const layout = pdf.getTrailer().get("Root").get("PageLayout");
+    if (!layout.isName()) return undefined;
+    const name = layout.asName();
+    if (name === "TwoColumnLeft" || name === "TwoPageLeft") return "two";
+    if (name === "TwoColumnRight" || name === "TwoPageRight") return "cover";
+    if (name === "SinglePage" || name === "OneColumn") return "single";
+  } catch {
+    /* a broken catalog has no preference */
+  }
+  return undefined;
+}
+
+/** Registers an open document and returns information about it for the UI. */
+function registerDoc(doc: mupdf.Document, bytes: Uint8Array, password?: string, ownerPassword?: string): DocInfo {
+  const pages = pageInfos(doc);
   let outline: OutlineNode[] = [];
   try {
     outline = convertOutline(doc.loadOutline());
@@ -160,11 +187,12 @@ function registerDoc(doc: mupdf.Document, bytes: Uint8Array, password?: string, 
     /* ignore broken bookmarks */
   }
   const title = doc.getMetaData(mupdf.Document.META_INFO_TITLE)?.trim() || null;
+  const pageMode = pageModeOf(doc);
   const docId = nextDocId++;
   // Undo and redo of annotation and form edits.
   doc.asPDF()?.enableJournal();
   docs.set(docId, newEntry(doc, bytes, password, ownerPassword));
-  return { docId, pageCount, pages, title, outline, isPdf: doc.asPDF() !== null };
+  return { docId, pageCount: pages.length, pages, title, outline, isPdf: doc.asPDF() !== null, pageMode };
 }
 
 /** Base of a new PDF: the preferred document, otherwise the one most pages come from. */
@@ -179,14 +207,130 @@ function pickBase(refs: PageRef[], prefer?: number): number {
 
 const normalizeRotation = (deg: number) => (((Math.round(deg / 90) * 90) % 360) + 360) % 360;
 
+type LinkDest = ReturnType<mupdf.Document["resolveLinkDestination"]>;
+
+interface OutlineDraft {
+  title: string;
+  uri?: string;
+  children: OutlineDraft[];
+}
+
+/**
+ * The bookmarks of a source document for a composed PDF: pointing to where their pages
+ * ended up (with the same view of the page). A bookmark whose page is gone points to
+ * its first remaining child, or is left out when nothing remains under it.
+ */
+function remapOutline(
+  src: mupdf.Document,
+  dest: mupdf.Document,
+  items: ReturnType<mupdf.Document["loadOutline"]>,
+  newIndex: (page: number) => number | undefined,
+): OutlineDraft[] {
+  const out: OutlineDraft[] = [];
+  for (const item of items ?? []) {
+    const children = remapOutline(src, dest, item.down ?? null, newIndex);
+    let uri: string | undefined;
+    const uriIn = item.uri ?? "";
+    if (uriIn && !uriIn.startsWith("#") && /^\w[\w+.-]*:/.test(uriIn)) {
+      uri = uriIn; // a web page or another file
+    } else if (typeof item.page === "number" && item.page >= 0) {
+      const page = newIndex(item.page);
+      if (page !== undefined) {
+        let dest0: LinkDest = { type: "Fit", chapter: 0, page, x: NaN, y: NaN, width: NaN, height: NaN, zoom: NaN };
+        try {
+          if (uriIn) dest0 = { ...src.resolveLinkDestination(uriIn), chapter: 0, page };
+        } catch {
+          /* keep "fit the page" */
+        }
+        uri = dest.formatLinkURI(dest0);
+      }
+    }
+    uri ??= firstUri(children);
+    if (uri || children.length) out.push({ title: item.title ?? "", uri, children });
+  }
+  return out;
+}
+
+const firstUri = (items: OutlineDraft[]): string | undefined => {
+  for (const item of items) {
+    const uri = item.uri ?? firstUri(item.children);
+    if (uri) return uri;
+  }
+  return undefined;
+};
+
+/** Inserts bookmarks at the position of the iterator (they come before what is there). */
+function writeOutline(it: mupdf.OutlineIterator, items: OutlineDraft[]) {
+  for (const item of items) {
+    it.insert({ title: item.title, uri: item.uri, open: false });
+    if (!item.children.length) continue;
+    it.prev(); // the bookmark just inserted
+    it.down();
+    writeOutline(it, item.children);
+    it.up();
+    it.next();
+  }
+}
+
+/**
+ * Bookmarks of a composed PDF: each of `files` gets a top-level bookmark named after
+ * it, pointing to its first page, with its own bookmarks under it (in the order in
+ * which the files come in the document). The base document keeps its bookmarks as
+ * they are, unless it is one of `files` itself.
+ */
+function mergeOutlines(base: mupdf.PDFDocument, baseId: number, refs: PageRef[], files: OutlineFile[]) {
+  const first = new Map<string, number>();
+  refs.forEach((r, i) => {
+    const key = `${r.docId}:${r.page}`;
+    if (!first.has(key)) first.set(key, i);
+  });
+  const firstPage = (docId: number) => refs.findIndex((r) => r.docId === docId);
+  const ordered = files.filter((f) => firstPage(f.docId) >= 0).sort((a, b) => firstPage(a.docId) - firstPage(b.docId));
+  if (!ordered.length) return;
+
+  const drafts = ordered.map((f): OutlineDraft => {
+    const src = getDoc(f.docId);
+    let children: OutlineDraft[] = [];
+    try {
+      children = remapOutline(src, base, src.loadOutline(), (page) => first.get(`${f.docId}:${page}`));
+    } catch {
+      /* broken bookmarks are left out */
+    }
+    const uri = base.formatLinkURI({
+      type: "Fit",
+      chapter: 0,
+      page: firstPage(f.docId),
+      x: NaN,
+      y: NaN,
+      width: NaN,
+      height: NaN,
+      zoom: NaN,
+    });
+    return { title: f.title, uri, children };
+  });
+
+  // The base document's own bookmarks go under its file name, too.
+  if (ordered.some((f) => f.docId === baseId)) base.getTrailer().get("Root").delete("Outlines");
+  const it = base.outlineIterator();
+  try {
+    while (it.next() === mupdf.OutlineIterator.ITERATOR_AT_ITEM) {
+      /* to the end of the top level */
+    }
+    writeOutline(it, drafts);
+  } finally {
+    it.destroy();
+  }
+}
+
 /**
  * Builds a new PDF from the given pages (order, rotation, pages from several files).
  *
  * It starts from a fresh copy of the main document (see pickBase), so its bookmarks,
  * metadata, forms and links are kept. Pages from other files are grafted into it
- * and finally everything is rearranged into the requested order.
+ * and finally everything is rearranged into the requested order. The bookmarks of
+ * `files` are added under a bookmark named after each (see mergeOutlines).
  */
-function buildPdf(refs: PageRef[], prefer?: number): Uint8Array {
+function buildPdf(refs: PageRef[], prefer?: number, files?: OutlineFile[]): Uint8Array {
   if (!refs.length) throw new CodedError("Document must have at least one page", "EMPTY");
 
   const baseId = pickBase(refs, prefer);
@@ -232,6 +376,8 @@ function buildPdf(refs: PageRef[], prefer?: number): Uint8Array {
         page.destroy();
       }
     });
+
+    if (files?.length) mergeOutlines(base, baseId, refs, files);
 
     return base.saveToBuffer("garbage=deduplicate,compress").asUint8Array().slice();
   } finally {
@@ -688,35 +834,81 @@ function historyOf(docId: number, id?: number): EditState {
   return { canUndo: pdf.canUndo(), canRedo: pdf.canRedo(), id };
 }
 
-/** Runs one user action as a single undo step. */
-function editPage<T>(docId: number, pageIndex: number, name: string, fn: (page: mupdf.PDFPage) => T): T {
+/** Runs one user action (possibly over many pages) as a single undo step. */
+function editDoc<T>(docId: number, name: string, fn: (pdf: mupdf.PDFDocument) => T): T {
   const entry = getEntry(docId);
   const pdf = getPdf(docId);
-  const page = pdf.loadPage(pageIndex);
   pdf.beginOperation(name);
   try {
-    const result = fn(page);
+    const result = fn(pdf);
     pdf.endOperation();
     return result;
   } catch (e) {
     pdf.abandonOperation();
     throw e;
   } finally {
-    page.destroy();
     entry.edited = true;
     dropStextFor(docId);
   }
 }
 
+/** Runs one user action on a page as a single undo step. */
+function editPage<T>(docId: number, pageIndex: number, name: string, fn: (page: mupdf.PDFPage) => T): T {
+  return editDoc(docId, name, (pdf) => {
+    const page = pdf.loadPage(pageIndex);
+    try {
+      return fn(page);
+    } finally {
+      page.destroy();
+    }
+  });
+}
+
+/** Name of the undo step that changes the size of pages (they are measured again after it). */
+const CROP_STEP = "crop";
+
 function undoRedo(docId: number, redo: boolean): EditState {
   const pdf = getPdf(docId);
+  let resized = false;
   if (redo ? pdf.canRedo() : pdf.canUndo()) {
+    const journal = pdf.getJournal();
+    resized = journal.steps[redo ? journal.position : journal.position - 1] === CROP_STEP;
     if (redo) pdf.redo();
     else pdf.undo();
     getEntry(docId).edited = true;
     dropStextFor(docId);
   }
-  return historyOf(docId);
+  const state = historyOf(docId);
+  if (resized) state.pages = pageInfos(pdf);
+  return state;
+}
+
+/** The smallest page a crop may leave (points). */
+const MIN_CROP = 18;
+
+/**
+ * Crops a page: its visible area (CropBox) shrinks by the margins, measured from the
+ * edges of the page as it is shown (rotated, already cropped). Nothing is removed from
+ * the page content, the rest is only hidden – like in Acrobat.
+ */
+function cropPage(page: mupdf.PDFPage, m: Margins) {
+  const [x0, y0, x1, y1] = page.getBounds();
+  const visible: Rect = [x0 + m.left, y0 + m.top, x1 - m.right, y1 - m.bottom];
+  if (visible[2] - visible[0] < MIN_CROP || visible[3] - visible[1] < MIN_CROP) {
+    throw new CodedError("The cropped page would be too small", "CROP_TOO_SMALL");
+  }
+  const r = mupdf.Rect.transform(visible, mupdf.Matrix.invert(page.getTransform()));
+  const obj = page.getObject();
+  // Within the media box (in the page's own coordinates, y up).
+  const media = obj.getInheritable("MediaBox");
+  if (media.isArray() && media.length === 4) {
+    const v = [0, 1, 2, 3].map((i) => media.get(i).asNumber());
+    r[0] = Math.max(r[0], Math.min(v[0], v[2]));
+    r[1] = Math.max(r[1], Math.min(v[1], v[3]));
+    r[2] = Math.min(r[2], Math.max(v[0], v[2]));
+    r[3] = Math.min(r[3], Math.max(v[1], v[3]));
+  }
+  obj.put("CropBox", r.map((v) => Math.round(v * 100) / 100));
 }
 
 type Handler<M extends EngineMethod> = (
@@ -805,8 +997,8 @@ const handlers: { [M in EngineMethod]: Handler<M> } = {
     return [{ quads, text }];
   },
 
-  compose({ pages, base }) {
-    const bytes = buildPdf(pages, base);
+  compose({ pages, base, files }) {
+    const bytes = buildPdf(pages, base, files);
     // The result stays encrypted like the base document, hence the same passwords
     // (an entered permissions password keeps the restrictions lifted).
     const baseEntry = docs.get(pickBase(pages, base));
@@ -879,6 +1071,29 @@ const handlers: { [M in EngineMethod]: Handler<M> } = {
     if (editPage(docId, page, "text", (pg) => replaceTextLine(pdf, pg, line, text))) {
       getEntry(docId).rewrite = true;
     }
+    return [historyOf(docId)];
+  },
+
+  crop({ docId, pages, margins }) {
+    requireRight(docId, "modify");
+    editDoc(docId, CROP_STEP, (pdf) => {
+      for (const index of pages) {
+        const page = pdf.loadPage(index);
+        try {
+          cropPage(page, margins);
+        } finally {
+          page.destroy();
+        }
+      }
+    });
+    const state = historyOf(docId);
+    state.pages = pageInfos(getDoc(docId));
+    return [state];
+  },
+
+  stamp({ docId, stamp }) {
+    requireRight(docId, "modify");
+    editDoc(docId, stamp.kind, (pdf) => stampPages(pdf, stamp));
     return [historyOf(docId)];
   },
 

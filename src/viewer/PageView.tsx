@@ -3,6 +3,7 @@ import { isAbortError, type PdfEngine } from "../engine/engine";
 import type { PageExtras, PageInfo, Quad } from "../engine/types";
 import { useEdit } from "../annotate/context";
 import { PageLayer } from "../annotate/PageLayer";
+import { rotationTransform } from "./layout";
 
 /** Upper limit of a page bitmap size (pixels) – protects memory at high zoom. */
 const MAX_PIXELS = 16_000_000;
@@ -13,6 +14,8 @@ interface Props {
   index: number;
   info: PageInfo;
   scale: number;
+  /** Rotation of the view (clockwise); `width` and `height` are the rotated size */
+  rotation: number;
   top: number;
   left: number;
   width: number;
@@ -38,7 +41,7 @@ function quadBox(q: Quad, info: PageInfo, scale: number): React.CSSProperties {
 }
 
 export const PageView = memo(function PageView(props: Props) {
-  const { engine, docId, index, info, scale, top, left, width, height } = props;
+  const { engine, docId, index, info, scale, rotation, top, left, width, height } = props;
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const hasImage = useRef(false);
   const priorityRef = useRef(props.priority);
@@ -110,8 +113,17 @@ export const PageView = memo(function PageView(props: Props) {
       style={{ top, left, width, height }}
       onMouseDown={(e) => props.onMouseDown(e, index)}
     >
-      <canvas ref={canvasRef} className={loaded ? "page-canvas" : "page-canvas pending"} />
       {!loaded && <div className="page-placeholder">{info.label}</div>}
+      {/* The page as it is, turned as a whole when the view is rotated. */}
+      <div
+        className="page-inner"
+        style={{
+          width: rotation % 180 ? height : width,
+          height: rotation % 180 ? width : height,
+          transform: rotationTransform(rotation, width, height),
+        }}
+      >
+      <canvas ref={canvasRef} className={loaded ? "page-canvas" : "page-canvas pending"} />
       <div className="page-overlay">
         {props.hits?.map((quads, i) =>
           quads.map((q, j) => (
@@ -125,7 +137,15 @@ export const PageView = memo(function PageView(props: Props) {
           <div key={`s${j}`} className="hl-select" style={quadBox(q, info, scale)} />
         ))}
       </div>
-      <PageLayer index={index} info={info} scale={scale} extras={extras?.data ?? null} settled={settled} />
+      <PageLayer
+        index={index}
+        info={info}
+        scale={scale}
+        rotation={rotation}
+        extras={extras?.data ?? null}
+        settled={settled}
+      />
+      </div>
     </div>
   );
 });

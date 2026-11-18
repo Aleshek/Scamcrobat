@@ -13,9 +13,9 @@ export interface PageScopeState {
   pages: number[] | null;
 }
 
-/** Which pages to export / print: all, the current one, or a range like "1-3, 5". */
-export function usePageScope(pageCount: number, currentPage: number): PageScopeState {
-  const [scope, setScope] = useState<Scope>("all");
+/** Which pages to export / print / change: all, the current one, or a range like "1-3, 5". */
+export function usePageScope(pageCount: number, currentPage: number, initial: Scope = "all"): PageScopeState {
+  const [scope, setScope] = useState<Scope>(initial);
   const [rangeText, setRangeText] = useState(`1-${pageCount}`);
   const pages = useMemo(() => {
     if (scope === "all") return Array.from({ length: pageCount }, (_, i) => i);
@@ -25,7 +25,13 @@ export function usePageScope(pageCount: number, currentPage: number): PageScopeS
   return { scope, setScope, rangeText, setRangeText, pages };
 }
 
-export function PageScopeField(props: { state: PageScopeState; pageCount: number; currentPage: number }) {
+export function PageScopeField(props: {
+  state: PageScopeState;
+  pageCount: number;
+  currentPage: number;
+  /** Label of the "current page" choice (e.g. "This page (3)") */
+  currentLabel?: (n: number) => string;
+}) {
   const t = useT();
   const { scope, setScope, rangeText, setRangeText, pages } = props.state;
   return (
@@ -37,7 +43,7 @@ export function PageScopeField(props: { state: PageScopeState; pageCount: number
       </label>
       <label className="radio">
         <input type="radio" checked={scope === "current"} onChange={() => setScope("current")} />
-        {t.pageScope.current(props.currentPage + 1)}
+        {(props.currentLabel ?? t.pageScope.current)(props.currentPage + 1)}
       </label>
       <label className="radio">
         <input type="radio" checked={scope === "range"} onChange={() => setScope("range")} />

@@ -40,13 +40,17 @@ Your files are never uploaded – everything is processed right in your browser.
 The app is available in **English** and **Czech**; it follows the system language and can be
 switched on the start page.
 
-## Features (version 0.5)
+## Features (version 0.6)
 
 - open PDFs by double click, from the dialog (Ctrl+O) or by dropping them into the window
 - **tabs** for several open documents (Ctrl+Tab to switch, Ctrl+W to close, Ctrl+T for a new tab);
   opening another PDF from Explorer adds a tab to the running window
 - smooth scrolling through all pages, page thumbnails and bookmarks (document outline)
 - zoom with buttons, Ctrl+wheel (around the cursor), fit width (Ctrl+2), fit page (Ctrl+0), 100 % (Ctrl+1)
+- **view** (the View menu): rotate the view by 90° (Ctrl+Shift+Plus / Minus) without changing the
+  file, **two pages side by side** – from the first page, or after a cover page like an open book
+  (documents that ask for it open that way) – and **full screen** (Ctrl+L, F11 in the desktop app):
+  one page or pair of pages at a time, turned with the arrows, the wheel, Page Down or Space; Esc ends it
 - text search (Ctrl+F, Enter/F3 next result, Shift+F3 previous) – ignores case and accents
 - text selection with the mouse (double click selects a word) and copying (Ctrl+C)
 - **comments** ("Annotate"): highlight, underline and strike out text (select it with the tool
@@ -77,7 +81,15 @@ switched on the start page.
 - **export pages to JPG / PNG / WebP** (Ctrl+E) – DPI, quality, page range and web friendly file names
 - **organizing pages** ("Organize pages"): rotate, delete, reorder by dragging, insert pages
   from another PDF (also by dropping a file right between the pages), undo/redo (Ctrl+Z / Ctrl+Y)
-- **merging several PDFs into one** (on the start page or with "Insert PDF")
+- **merging several PDFs into one** (on the start page or with "Insert PDF"); the bookmarks of every
+  merged file are kept, each file's under a bookmark named after it
+- **cropping pages** ("Edit" → Crop pages): drag a box around what should stay, fine-tune the margins
+  in millimeters and apply it to this page, all pages or a range; only the visible area changes,
+  the content outside stays in the file
+- **watermark** ("Edit" → Watermark): text, size, color, opacity, rotation, over or behind the
+  page content, with a preview
+- **page numbers** ("Edit" → Page numbers): six positions, formats "1", "1 / 10", "Page 1 of 10"
+  or "– 1 –", any first number, all pages or a range
 - **splitting a PDF** into single pages, chunks of N pages or ranges, and **extracting** selected pages
 - Save (Ctrl+S) and Save as (Ctrl+Shift+S); bookmarks, metadata and forms of the original
   document are kept, and you are warned about unsaved changes when closing; comments and form
@@ -127,13 +139,14 @@ electron/        main process of the desktop app (window, dialogs, writing files
   preload.cjs    a narrow bridge between the window and the system (the window has no Node.js access)
 src/
   engine/        PDF engine: MuPDF (WebAssembly) in a Web Worker + render queue;
-                 textedit.ts corrects lines of text
-  viewer/        virtualized page view, zoom, text selection, highlights
+                 textedit.ts corrects lines of text, stamp.ts writes watermarks and page numbers
+  viewer/        virtualized page view, zoom, rotated view, pages side by side, full screen
   annotate/      comments, form fields, links, signatures, line editing and redaction over the pages
   components/    toolbar, tabs, sidebar, dialogs (password protection among them)
   export/        export to images
   print/         printing
   organize/      organizing pages, merging and splitting PDFs
+  pagetools/     cropping pages, watermark and page numbers dialogs
   i18n/          translations (en.tsx is the source, other languages follow its shape)
   App.tsx        tabs, opening and saving documents
   DocView.tsx    one open document: toolbar, sidebar, viewer
@@ -150,8 +163,24 @@ scroll position, search), while hidden tabs release their rendered pages.
 Page editing is non-destructive: the organizer only works with a list of "page X of file Y,
 rotated by Z°" and the real PDF is built when you click Done. It starts from a fresh copy of
 the original document, pages from other files are grafted into it and then everything is
-rearranged – that is why bookmarks, metadata, links and forms survive. On the desktop, saving
-goes through a temporary file, so an error (file open elsewhere, full disk) never damages the original.
+rearranged – that is why bookmarks, metadata, links and forms survive. The bookmarks of merged
+(or inserted) files are copied to point where their pages ended up – with the same view of the
+page – under a new top-level bookmark named after each file. On the desktop, saving goes through
+a temporary file, so an error (file open elsewhere, full disk) never damages the original.
+
+The view itself never touches the file: a rotated view turns the rendered pages with CSS (and
+maps the mouse back into the page), two pages side by side and full screen are just another
+layout of the same virtualized pages. A PDF that asks for two pages (PageLayout TwoColumn/TwoPage)
+opens that way.
+
+Cropping sets the CropBox of the chosen pages – what is shown and printed – and keeps the content
+outside it in the file, as Acrobat does. Watermarks and page numbers are written into each page as
+a small content stream of their own: before the page content (behind it) or after it (over it,
+with the page's graphics state wrapped so that it cannot leak into the stamp), marked as a
+pagination artifact, so that tools that read the text in order can skip it. The text uses Helvetica
+(URW Nimbus Sans built into MuPDF) embedded as a subset with a ToUnicode map, so it can be searched
+and copied, and the opacity is an ExtGState; it is placed in the page's own orientation, so it stays
+upright on rotated and cropped pages. Each of these is one step of the undo journal.
 
 Comments, form values and signatures are written straight into the open PDF by MuPDF, page by
 page; the page then re-renders and shows them exactly as any other PDF reader will. Every change
@@ -223,15 +252,13 @@ python pdf2jpg.py PDF             # one-off conversion of a folder of PDFs to JP
 Done: **0.1** viewer and export to images · **0.2** organizing pages, merging, splitting, saving ·
 **0.3** printing, tabs, English · **0.4** comments, forms, signatures, links, recent files ·
 **0.5** redaction, correcting text line by line, password protection and permissions ·
-**0.5.1** respecting the restrictions of secured documents
+**0.5.1** respecting the restrictions of secured documents · **0.6** rotating the view, two pages
+side by side, full screen, bookmarks kept when merging, cropping pages, watermarks, page numbers
 
 **Later**, roughly in this order:
 
 | Feature | Effort |
 |---|---|
-| Rotating the view, full screen, two pages side by side | small |
-| Merging bookmarks of all merged PDFs | small |
-| Cropping pages, watermarks, page numbers | small – medium |
 | Images → PDF, PDF compression | medium |
 | Comparing two versions of a document | medium |
 | OCR of scanned documents | larger |

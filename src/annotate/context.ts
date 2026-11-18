@@ -41,6 +41,10 @@ export interface EditApi {
   editText(page: number, line: TextLine, text: string): Promise<boolean>;
   /** Blacks out an area for good (once saved); false when it failed. */
   redact(page: number, area: RedactArea): Promise<boolean>;
+  /** The area to keep when cropping, while the crop dialog is open */
+  crop: { page: number; rect: Rect } | null;
+  /** An area to keep was marked on a page (crop tool). */
+  startCrop(page: number, rect: Rect): void;
   placeSignature(page: number, rect: Rect): void;
   /** A signature form field was clicked. */
   signField(page: number, rect: Rect): void;

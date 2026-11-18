@@ -39,13 +39,18 @@ Soubory se nikam neodesílají – vše se zpracovává přímo ve vašem prohl�
 
 Aplikace je **česky** i **anglicky**; řídí se jazykem systému a přepnout jde na úvodní obrazovce.
 
-## Co umí (verze 0.5)
+## Co umí (verze 0.6)
 
 - otevření PDF dvojklikem, z dialogu (Ctrl+O) nebo přetažením do okna
 - **karty** pro více otevřených dokumentů (Ctrl+Tab přepnutí, Ctrl+W zavření, Ctrl+T nová karta);
   další PDF otevřené z Průzkumníka přibude jako karta do běžícího okna
 - plynulé zobrazení všech stránek, náhledy stránek a záložky (osnova dokumentu)
 - zoom tlačítky, Ctrl+kolečkem (kolem kurzoru), „na šířku“ (Ctrl+2), „celá stránka“ (Ctrl+0), 100 % (Ctrl+1)
+- **zobrazení** (nabídka „Zobrazení“): otočení zobrazení o 90° (Ctrl+Shift+Plus / Minus) bez změny
+  souboru, **dvě stránky vedle sebe** – od první stránky, nebo po titulní stránce jako v otevřené
+  knize (dokumenty, které si to přejí, se tak rovnou otevřou) – a **celá obrazovka** (Ctrl+L, na
+  desktopu i F11): vždy jedna stránka nebo dvojice, listuje se šipkami, kolečkem, Page Down nebo
+  mezerníkem; Esc ji ukončí
 - hledání v textu (Ctrl+F, Enter/F3 další výsledek, Shift+F3 předchozí) – nezáleží na velikosti písmen ani diakritice
 - výběr textu myší (dvojklik vybere slovo) a kopírování (Ctrl+C)
 - **komentáře** (tlačítko „Komentáře“): zvýraznění, podtržení a přeškrtnutí textu (stačí text
@@ -80,7 +85,15 @@ Aplikace je **česky** i **anglicky**; řídí se jazykem systému a přepnout j
 - **uspořádání stránek** (tlačítko „Uspořádat stránky“): otáčení, mazání, přeskládání
   přetažením, vložení stránek z jiného PDF (i přetažením souboru přímo mezi stránky),
   Zpět/Znovu (Ctrl+Z / Ctrl+Y)
-- **sloučení více PDF do jednoho** (na úvodní obrazovce nebo „Vložit PDF“)
+- **sloučení více PDF do jednoho** (na úvodní obrazovce nebo „Vložit PDF“); záložky všech
+  slučovaných souborů zůstanou zachované, každý soubor pod záložkou se svým názvem
+- **ořez stránek** („Upravit“ → Oříznout stránky): stačí tažením označit, co má zůstat, okraje lze
+  doladit v milimetrech a ořez použít na tuto stránku, všechny stránky nebo rozsah; mění se jen
+  viditelná oblast, obsah mimo ni v souboru zůstává
+- **vodoznak** („Upravit“ → Vodoznak): text, velikost, barva, krytí, otočení, přes obsah stránky
+  nebo pod něj, s náhledem
+- **číslování stránek** („Upravit“ → Čísla stránek): šest pozic, formáty „1“, „1 / 10“,
+  „Strana 1 z 10“ nebo „– 1 –“, libovolné první číslo, všechny stránky nebo rozsah
 - **rozdělení PDF** po stránkách, po N stránkách nebo podle rozsahů a **extrakce** vybraných stránek
 - uložení (Ctrl+S) a Uložit jako (Ctrl+Shift+S); záložky, metadata a formuláře původního
   dokumentu zůstávají zachované, upozornění na neuložené změny při zavírání; komentáře a hodnoty
@@ -100,15 +113,13 @@ a automatické testy) je v [anglickém README](README.md#development).
 Hotovo: **0.1** prohlížeč a export do obrázků · **0.2** uspořádání stránek, slučování, rozdělení,
 ukládání · **0.3** tisk, karty, angličtina · **0.4** komentáře, formuláře, podpisy, odkazy,
 nedávné soubory · **0.5** začernění, oprava textu po řádcích, ochrana heslem a oprávnění ·
-**0.5.1** dodržování omezení zabezpečených dokumentů
+**0.5.1** dodržování omezení zabezpečených dokumentů · **0.6** otáčení zobrazení, dvě stránky
+vedle sebe, celá obrazovka, záložky při slučování, ořez stránek, vodoznak, číslování stránek
 
 **Později**, zhruba v tomto pořadí:
 
 | Funkce | Náročnost |
 |---|---|
-| Otáčení zobrazení, celá obrazovka, dvě stránky vedle sebe | malá |
-| Sloučení záložek ze všech slučovaných PDF | malá |
-| Ořez stránek, vodoznak, číslování stránek | malá – střední |
 | Obrázky → PDF, komprese PDF | střední |
 | Porovnání dvou verzí dokumentu | střední |
 | OCR naskenovaných dokumentů | větší |

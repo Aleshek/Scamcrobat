@@ -1,13 +1,15 @@
 /**
  * Interactive layer above a rendered page: links, form fields, selecting, moving and
  * resizing annotations, drawing, writing notes and text boxes, correcting lines of
- * text and blacking out areas. The page content itself is drawn by MuPDF into the
- * page image; this layer only adds what the user interacts with.
+ * text, blacking out areas and marking the area to crop. The page content itself is
+ * drawn by MuPDF into the page image; this layer only adds what the user interacts with.
+ * It lies over the page as it is (unrotated); a rotated view turns it with the page.
  */
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { Check, Pencil, Trash } from "lucide-react";
 import type { AnnotInfo, PageExtras, PageInfo, Point, Quad, Rect, TextLine, WidgetInfo } from "../engine/types";
 import { useT } from "../i18n";
+import { unrotateDelta, unrotatePoint } from "../viewer/layout";
 import { useEdit, type Draft, type EditApi } from "./context";
 import { colorOf, cssColor, PALETTE, rectAround, sameColor, TEXT_LINE_HEIGHT, textBoxRect } from "./tools";
 
@@ -39,6 +41,8 @@ interface Props {
   index: number;
   info: PageInfo;
   scale: number;
+  /** Rotation of the view (clockwise) */
+  rotation: number;
   extras: PageExtras | null;
   /** Changes when the page image and extras both show the latest edit */
   settled: number;
@@ -90,7 +94,7 @@ function simplify(points: Point[], min: number): Point[] {
   return out;
 }
 
-export function PageLayer({ index, info, scale, extras, settled }: Props) {
+export function PageLayer({ index, info, scale, rotation, extras, settled }: Props) {
   const ctx = useEdit();
   const t = useT();
   const layerRef = useRef<HTMLDivElement>(null);
@@ -99,7 +103,7 @@ export function PageLayer({ index, info, scale, extras, settled }: Props) {
   const [strokes, setStrokes] = useState<Stroke[]>([]);
   const drawing = useRef<Point[] | null>(null);
   const [ghost, setGhost] = useState<Point | null>(null);
-  /** Area being blacked out (dragged, or sent and waiting for the page to show it) */
+  /** Area being blacked out or cropped (dragged, or sent and waiting for the page to show it) */
   const [area, setArea] = useState<{ from: Point; to: Point; done?: boolean } | null>(null);
   /** Lines of text that can be corrected (edit text tool) */
   const [lines, setLines] = useState<TextLine[]>([]);
@@ -146,8 +150,8 @@ export function PageLayer({ index, info, scale, extras, settled }: Props) {
     height: (r[3] - r[1]) * scale,
   });
   const toPdf = (clientX: number, clientY: number): Point => {
-    const r = layerRef.current!.getBoundingClientRect();
-    return [(clientX - r.left) / scale + info.x0, (clientY - r.top) / scale + info.y0];
+    const [u, v] = unrotatePoint(layerRef.current!.getBoundingClientRect(), rotation, clientX, clientY);
+    return [u / scale + info.x0, v / scale + info.y0];
   };
   const remember = (e: React.MouseEvent) => {
     downAt.current = { x: e.clientX, y: e.clientY };
@@ -174,8 +178,9 @@ export function PageLayer({ index, info, scale, extras, settled }: Props) {
     let current: Rect | null = null;
     const move = (ev: PointerEvent) => {
       if (!current && Math.hypot(ev.clientX - start.x, ev.clientY - start.y) < CLICK_SLOP) return;
-      const dx = (ev.clientX - start.x) / scale;
-      const dy = (ev.clientY - start.y) / scale;
+      const [mx, my] = unrotateDelta(ev.clientX - start.x, ev.clientY - start.y, rotation);
+      const dx = mx / scale;
+      const dy = my / scale;
       current =
         corner === undefined
           ? [base[0] + dx, base[1] + dy, base[2] + dx, base[3] + dy]
@@ -226,7 +231,7 @@ export function PageLayer({ index, info, scale, extras, settled }: Props) {
   const onCapturePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (e.button !== 0) return;
     const p = toPdf(e.clientX, e.clientY);
-    if (tool === "redactarea") {
+    if (tool === "redactarea" || tool === "crop") {
       e.currentTarget.setPointerCapture(e.pointerId);
       setArea({ from: p, to: p });
       return;
@@ -266,7 +271,7 @@ export function PageLayer({ index, info, scale, extras, settled }: Props) {
       setGhost(toPdf(e.clientX, e.clientY));
       return;
     }
-    if (tool === "redactarea") {
+    if (tool === "redactarea" || tool === "crop") {
       if (area && !area.done) setArea({ from: area.from, to: clampToPage(toPdf(e.clientX, e.clientY)) });
       return;
     }
@@ -281,6 +286,13 @@ export function PageLayer({ index, info, scale, extras, settled }: Props) {
   };
 
   const onCapturePointerUp = () => {
+    if (tool === "crop" && area && !area.done) {
+      const rect = rectOf(area.from, area.to);
+      setArea(null);
+      // A click or a tiny drag crops nothing.
+      if ((rect[2] - rect[0]) * scale >= CLICK_SLOP && (rect[3] - rect[1]) * scale >= CLICK_SLOP) ctx.startCrop(index, rect);
+      return;
+    }
     if (tool === "redactarea" && area && !area.done) {
       const rect = rectOf(area.from, area.to);
       // A click or a tiny drag blacks out nothing.
@@ -321,8 +333,10 @@ export function PageLayer({ index, info, scale, extras, settled }: Props) {
 
   const capture =
     (ctx.canAnnotate && (tool === "ink" || tool === "note" || tool === "text" || (tool === "signature" && ctx.signature))) ||
-    (ctx.canModify && (tool === "edittext" || tool === "redactarea"));
+    (ctx.canModify && (tool === "edittext" || tool === "redactarea" || tool === "crop"));
 
+  const cropRect =
+    tool === "crop" && area ? rectOf(area.from, area.to) : ctx.crop?.page === index ? ctx.crop.rect : null;
   const sigAspect = ctx.signature ? ctx.signature.width / ctx.signature.height : 1;
   const inkColor = cssColor(colorOf(ctx.settings.colors.ink));
 
@@ -440,7 +454,16 @@ export function PageLayer({ index, info, scale, extras, settled }: Props) {
         </div>
       )}
 
-      {area && <div className={area.done ? "pl-redact done" : "pl-redact"} style={box(rectOf(area.from, area.to))} />}
+      {area && tool !== "crop" && (
+        <div className={area.done ? "pl-redact done" : "pl-redact"} style={box(rectOf(area.from, area.to))} />
+      )}
+
+      {/* The part of the page that stays after cropping (the rest is dimmed). */}
+      {cropRect && (
+        <div className="pl-crop-shade">
+          <div className="pl-crop" style={box(cropRect)} />
+        </div>
+      )}
 
       {tool === "edittext" &&
         ctx.canModify &&

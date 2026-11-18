@@ -465,7 +465,7 @@ class FontWriter {
   }
 }
 
-const hex4 = (n: number) => n.toString(16).toUpperCase().padStart(4, "0");
+export const hex4 = (n: number) => n.toString(16).toUpperCase().padStart(4, "0");
 
 function utf16Hex(s: string): string {
   let out = "";
@@ -473,7 +473,7 @@ function utf16Hex(s: string): string {
   return out;
 }
 
-function toUnicodeCMap(gids: Map<number, string>): string {
+export function toUnicodeCMap(gids: Map<number, string>): string {
   const entries = [...gids].sort((a, b) => a[0] - b[0]);
   let body = "";
   for (let i = 0; i < entries.length; i += 100) {
@@ -757,7 +757,7 @@ function removeGlyphs(page: mupdf.PDFPage, chars: Char[], dir: Point) {
   );
 }
 
-const num = (v: number) => {
+export const num = (v: number) => {
   const s = v.toFixed(4);
   return s.includes(".") ? s.replace(/0+$/, "").replace(/\.$/, "") : s;
 };
