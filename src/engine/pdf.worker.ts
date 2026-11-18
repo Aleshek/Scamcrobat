@@ -545,6 +545,40 @@ function convertOutline(items: ReturnType<mupdf.Document["loadOutline"]>): Outli
   }));
 }
 
+/**
+ * Finds all occurrences of `needle` on a page, like browsers do: "Crows" matches
+ * "crows", "zlutoucky" matches "žluťoučký".
+ *
+ * Not `page.search()`: MuPDF 1.28's text extraction expands presentation forms
+ * (U+FB00–U+FDFF, U+FE70–U+FEFC) itself and, for code points that have no
+ * decomposition – e.g. U+FD3E/U+FD3F, which Word's ToUnicode uses for "(" and ")"
+ * in Segoe UI – stores an uninitialised value instead. It is often 0, depending on
+ * what ran before (rendering any page makes it likely), and the search treats the
+ * page text as a C string, so everything after that 0 becomes unsearchable.
+ * "preserve-ligatures" skips that code; the search itself still folds ligatures
+ * (ignore-diacritics implies compatibility decomposition), so "fi" matches "ﬁ".
+ * Fixed upstream after MuPDF 1.28.6.
+ */
+function searchPage(page: mupdf.Page, needle: string): Quad[][] {
+  const stext = page.toStructuredText("dehyphenate,preserve-ligatures");
+  try {
+    return stext.search(needle, "ignore-case,ignore-diacritics") as Quad[][];
+  } finally {
+    stext.destroy();
+  }
+}
+
+/** Drops repeated quads – each character of a ligature maps to the whole glyph. */
+function uniqueQuads(quads: Quad[]): Quad[] {
+  const seen = new Set<string>();
+  return quads.filter((quad) => {
+    const key = quad.join();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 /** Renders a page into an RGB pixmap at the given scale (1 = 72 DPI). */
 function renderPixmap(docId: number, pageIndex: number, scale: number): mupdf.Pixmap {
   const page = getDoc(docId).loadPage(pageIndex);
@@ -972,9 +1006,14 @@ const handlers: { [M in EngineMethod]: Handler<M> } = {
     for (let i = 0; i < count; i++) {
       const page = doc.loadPage(i);
       try {
-        // Like browsers: "Crows" matches "crows", "zlutoucky" matches "žluťoučký".
-        for (const quads of page.search(needle, "ignore-case,ignore-diacritics")) {
-          hits.push({ page: i, quads: quads as Quad[] });
+        let previous = "";
+        for (const found of searchPage(page, needle)) {
+          const quads = uniqueQuads(found);
+          // A match inside a ligature ("fi" in "ﬃ") can come back twice.
+          const key = quads.join(";");
+          if (key === previous) continue;
+          previous = key;
+          hits.push({ page: i, quads });
         }
       } finally {
         page.destroy();

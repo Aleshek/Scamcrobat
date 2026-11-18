@@ -253,7 +253,8 @@ Done: **0.1** viewer and export to images · **0.2** organizing pages, merging, 
 **0.3** printing, tabs, English · **0.4** comments, forms, signatures, links, recent files ·
 **0.5** redaction, correcting text line by line, password protection and permissions ·
 **0.5.1** respecting the restrictions of secured documents · **0.6** rotating the view, two pages
-side by side, full screen, bookmarks kept when merging, cropping pages, watermarks, page numbers
+side by side, full screen, bookmarks kept when merging, cropping pages, watermarks, page numbers ·
+**0.6.1** search finds every word on pages already shown
 
 **Later**, roughly in this order:
 

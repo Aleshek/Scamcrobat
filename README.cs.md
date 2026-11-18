@@ -114,7 +114,8 @@ Hotovo: **0.1** prohlížeč a export do obrázků · **0.2** uspořádání str
 ukládání · **0.3** tisk, karty, angličtina · **0.4** komentáře, formuláře, podpisy, odkazy,
 nedávné soubory · **0.5** začernění, oprava textu po řádcích, ochrana heslem a oprávnění ·
 **0.5.1** dodržování omezení zabezpečených dokumentů · **0.6** otáčení zobrazení, dvě stránky
-vedle sebe, celá obrazovka, záložky při slučování, ořez stránek, vodoznak, číslování stránek
+vedle sebe, celá obrazovka, záložky při slučování, ořez stránek, vodoznak, číslování stránek ·
+**0.6.1** vyhledávání najde všechna slova i na už zobrazených stránkách
 
 **Později**, zhruba v tomto pořadí:
 
