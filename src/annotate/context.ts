@@ -1,6 +1,6 @@
 import { createContext, useContext } from "react";
 import type { PdfEngine } from "../engine/engine";
-import type { AnnotEdit, Color, EditState, Point, Rect } from "../engine/types";
+import type { AnnotEdit, Color, EditState, Point, RedactArea, Rect, TextLine } from "../engine/types";
 import type { Signature } from "./signatures";
 import type { Tool, ToolSettings } from "./tools";
 
@@ -33,6 +33,10 @@ export interface EditApi {
   /** Applies an edit; null when it failed (the error is shown to the user). */
   edit(page: number, edit: AnnotEdit): Promise<EditState | null>;
   setField(page: number, id: number, change: { value?: string; toggle?: boolean }): Promise<void>;
+  /** Replaces the text of a line; false when it failed (the error is shown to the user). */
+  editText(page: number, line: TextLine, text: string): Promise<boolean>;
+  /** Blacks out an area for good (once saved); false when it failed. */
+  redact(page: number, area: RedactArea): Promise<boolean>;
   placeSignature(page: number, rect: Rect): void;
   /** A signature form field was clicked. */
   signField(page: number, rect: Rect): void;

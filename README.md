@@ -5,8 +5,8 @@
 [![CI](https://github.com/Aleshek/Scamcrobat/actions/workflows/ci.yml/badge.svg)](https://github.com/Aleshek/Scamcrobat/actions/workflows/ci.yml)
 [![Latest release](https://img.shields.io/github/v/release/Aleshek/Scamcrobat?label=release)](https://github.com/Aleshek/Scamcrobat/releases/latest)
 
-A free (AGPL-3.0) PDF viewer and editor – comments, forms, signatures and page editing
-with no subscription, no account and no ads.
+A free (AGPL-3.0) PDF viewer and editor – comments, forms, signatures, text corrections,
+redaction, password protection and page editing with no subscription, no account and no ads.
 It runs as a Windows desktop app (it can be your default program for `.pdf` files)
 and as a web page; both versions share the same code.
 
@@ -40,7 +40,7 @@ Your files are never uploaded – everything is processed right in your browser.
 The app is available in **English** and **Czech**; it follows the system language and can be
 switched on the start page.
 
-## Features (version 0.4)
+## Features (version 0.5)
 
 - open PDFs by double click, from the dialog (Ctrl+O) or by dropping them into the window
 - **tabs** for several open documents (Ctrl+Tab to switch, Ctrl+W to close, Ctrl+T for a new tab);
@@ -57,6 +57,16 @@ switched on the start page.
 - **signing** ("Sign"): draw your signature with the mouse, pen or finger, or load a photo of it
   (the paper background is removed), then click where it belongs or into a signature field;
   up to four signatures can be remembered on this device
+- **correcting text** ("Edit"): click a line of text and fix a typo, a date, a name or an amount;
+  the line is written again in the same place with the same font, size and color. Letters the
+  embedded font does not contain come from a built-in font with the same widths (Helvetica/Arial,
+  Times, Courier – sans, serif or mono, bold and italic follow the original); undo/redo
+- **redaction** ("Edit" → Black out text / Black out an area): whatever is under the black box –
+  text, image pixels, drawings, links, comments and form fields – is really removed from the
+  file, not just covered. Until you save it can be undone; saving asks first, because then it is gone for good
+- **password protection** (the lock button): a password to open the document, restrictions of
+  printing, copying and changes guarded by a permissions password, or both – AES 256-bit, applied
+  when you save; a protected document can be changed or unprotected with its permissions password
 - **clickable links** – to other pages of the document and to web pages
 - **recent files** on the start page (desktop); a document reopens on the page where you left it
 - **printing** (Ctrl+P) – all pages, the current one or a range; landscape pages stay landscape
@@ -67,8 +77,10 @@ switched on the start page.
 - **splitting a PDF** into single pages, chunks of N pages or ranges, and **extracting** selected pages
 - Save (Ctrl+S) and Save as (Ctrl+Shift+S); bookmarks, metadata and forms of the original
   document are kept, and you are warned about unsaved changes when closing; comments and form
-  values are appended to the end of the file whenever possible, so the original content stays intact
-- password protected documents
+  values are appended to the end of the file whenever possible, so the original content stays intact;
+  after a redaction, a text correction or a change of the protection the whole file is written
+  again, so nothing removed stays inside
+- opening password protected documents
 - light and dark theme following the system setting
 
 ## Development
@@ -110,10 +122,11 @@ electron/        main process of the desktop app (window, dialogs, writing files
   main.js        app:// protocol, single instance, files from the command line, printing
   preload.cjs    a narrow bridge between the window and the system (the window has no Node.js access)
 src/
-  engine/        PDF engine: MuPDF (WebAssembly) in a Web Worker + render queue
+  engine/        PDF engine: MuPDF (WebAssembly) in a Web Worker + render queue;
+                 textedit.ts corrects lines of text
   viewer/        virtualized page view, zoom, text selection, highlights
-  annotate/      comments, form fields, links and signatures over the pages
-  components/    toolbar, tabs, sidebar, dialogs
+  annotate/      comments, form fields, links, signatures, line editing and redaction over the pages
+  components/    toolbar, tabs, sidebar, dialogs (password protection among them)
   export/        export to images
   print/         printing
   organize/      organizing pages, merging and splitting PDFs
@@ -144,6 +157,30 @@ so a further save starts from what is on disk. Comments are standard annotations
 Underline, StrikeOut, Text, FreeText, Ink, Stamp for signatures); forms with JavaScript are filled
 in, but their scripts do not run. Remembered signatures and tool settings are kept in the app's
 local storage and never leave the device.
+
+Redaction is MuPDF's: a Redact annotation over the marked text or area is applied right away,
+which removes the glyphs, the covered image pixels and line art and the links under it from the
+page content and draws the black box; comments and form fields over it are deleted as well, as
+they would still show (or hold) what was there. Correcting text (`src/engine/textedit.ts`) works
+on a single line: the glyphs actually drawn on the page are collected – font, glyph id, matrix,
+color – since embedded subset fonts often have no usable character map. The old glyphs are
+removed by a redaction limited to the line's baseline band (lines above and below stay
+untouched) and the whole line is written again in a new content stream: the unchanged start keeps
+its exact positions, the unchanged end moves by the change in width. New characters use the
+original font when it has them (a new font dictionary pointing to the font program already in
+the file, so a correction adds only a few hundred bytes); the rest comes from the URW++ Nimbus
+fonts built into MuPDF (metric-compatible with Helvetica/Arial, Times New Roman and Courier New,
+with full Central European coverage), embedded as subsets of a few kilobytes. These fonts are part
+of MuPDF's AGPL distribution and the URW base 35 fonts carry a font exception for embedding them
+in documents, so no extra fonts (such as Liberation) are bundled and the app does not grow. Every
+written font gets a ToUnicode map, so the corrected text can be searched and copied.
+
+An incremental save would keep the removed content in the original bytes, so after a redaction or
+a text correction the document is saved as a full, garbage-collected rewrite (signatures made
+before that become invalid, as with any rewrite). Password protection is a save option as well:
+MuPDF encrypts the rewritten file with AES-256 (open password, permissions password and the
+permission bits for printing, copying and changes); an encrypted document stays encrypted with
+its passwords when saved again.
 
 Printing renders the chosen pages to images (150 or 300 DPI) and hands them to the system print
 dialog, one image per sheet, each sheet sized like its PDF page – the same approach the PDF
@@ -177,14 +214,8 @@ python pdf2jpg.py PDF             # one-off conversion of a folder of PDFs to JP
 ## Roadmap
 
 Done: **0.1** viewer and export to images · **0.2** organizing pages, merging, splitting, saving ·
-**0.3** printing, tabs, English · **0.4** comments, forms, signatures, links, recent files
-
-**0.5 – redaction and text corrections**
-- redaction – text and images under the black box are really removed, not just covered
-- correcting existing text line by line (typos, dates, names, amounts): the original text is
-  removed and the new one is written in its place with the same size and color; letters missing
-  from the embedded font fall back to a font with the same metrics (Liberation)
-- password protection and permissions (printing, copying)
+**0.3** printing, tabs, English · **0.4** comments, forms, signatures, links, recent files ·
+**0.5** redaction, correcting text line by line, password protection and permissions
 
 **Later**, roughly in this order:
 

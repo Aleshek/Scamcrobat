@@ -10,6 +10,8 @@ export interface OpenDoc {
   dir?: string;
   /** The document has unsaved changes */
   dirty: boolean;
+  /** Something was blacked out since the last save (saving asks first) */
+  redacted?: boolean;
 }
 
 /** A tab either shows a document or the start page (doc = null). */

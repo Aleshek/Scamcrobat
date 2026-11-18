@@ -5,12 +5,22 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PdfEngine } from "./engine/engine";
-import type { AnnotEdit, EditState, Rect, SearchHit, TextSelection } from "./engine/types";
+import type { AnnotEdit, EditState, RedactArea, Rect, SearchHit, TextLine, TextSelection } from "./engine/types";
 import { AnnotateBar } from "./annotate/AnnotateBar";
 import { EditContext, type AnnotRef, type Draft, type EditApi } from "./annotate/context";
 import { SignatureDialog } from "./annotate/SignatureDialog";
 import { signatureBytes, type Signature } from "./annotate/signatures";
-import { colorOf, fitInto, loadSettings, MARKUP, saveSettings, type Tool, type ToolSettings } from "./annotate/tools";
+import {
+  colorOf,
+  fitInto,
+  isEditTool,
+  loadSettings,
+  MARKUP,
+  saveSettings,
+  type Tool,
+  type ToolSettings,
+} from "./annotate/tools";
+import { ProtectDialog } from "./components/ProtectDialog";
 import { Toolbar } from "./components/Toolbar";
 import { Sidebar } from "./components/Sidebar";
 import { ExportDialog } from "./export/ExportDialog";
@@ -44,8 +54,10 @@ interface Props {
   onOpen(): void;
   onSave(asNew: boolean): void;
   onOrganize(): void;
-  /** The document content was changed (annotations, form fields). */
+  /** The document content was changed (annotations, form fields, text). */
   onEdited(): void;
+  /** Something was blacked out (saving it removes the content for good). */
+  onRedacted(): void;
   onToast(message: string): void;
   onError(message: string): void;
 }
@@ -66,7 +78,7 @@ export function DocView(props: Props) {
   const [currentPage, setCurrentPage] = useState(0);
   const [search, setSearch] = useState<SearchState>(NO_SEARCH);
   const [selection, setSelection] = useState<TextSelection | null>(null);
-  const [dialog, setDialog] = useState<"export" | "print" | null>(null);
+  const [dialog, setDialog] = useState<"export" | "print" | "protect" | null>(null);
   const currentPageRef = useRef(currentPage);
   currentPageRef.current = currentPage;
   const selectionRef = useRef(selection);
@@ -78,7 +90,8 @@ export function DocView(props: Props) {
   // ---------- Annotations and forms ----------
 
   const canEdit = info.isPdf;
-  const [annotating, setAnnotating] = useState(false);
+  /** The second toolbar row: annotation tools, or editing tools (text, redaction) */
+  const [bar, setBar] = useState<"annotate" | "edit" | null>(null);
   const [tool, setTool] = useState<Tool>("select");
   const [settings, setSettingsState] = useState<ToolSettings>(loadSettings);
   const [signature, setSignature] = useState<Signature | null>(null);
@@ -88,12 +101,12 @@ export function DocView(props: Props) {
   const [revs, setRevs] = useState<{ all: number; pages: Record<number, number> }>({ all: 0, pages: {} });
   /** Signature dialog; `field` = a signature form field to fill */
   const [sigDialog, setSigDialog] = useState<{ field?: { page: number; rect: Rect } } | null>(null);
-  const activeTool: Tool = annotating ? tool : "select";
+  const activeTool: Tool = bar ? tool : "select";
   const toolRef = useRef(activeTool);
   toolRef.current = activeTool;
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
-  const { onEdited } = props;
+  const { onEdited, onRedacted } = props;
 
   const bumpPage = useCallback(
     (page: number) => setRevs((r) => ({ all: r.all, pages: { ...r.pages, [page]: (r.pages[page] ?? 0) + 1 } })),
@@ -134,6 +147,41 @@ export function DocView(props: Props) {
     [engine, info.docId, bumpAll, onEdited, onError, t],
   );
 
+  const editText = useCallback(
+    async (page: number, line: TextLine, text: string): Promise<boolean> => {
+      try {
+        setHistory(await engine.editText(info.docId, page, line, text));
+        bumpPage(page);
+        onEdited();
+        return true;
+      } catch (e) {
+        onError(t.annotate.editFailed(errorText(e)));
+        bumpAll();
+        return false;
+      }
+    },
+    [engine, info.docId, bumpPage, bumpAll, onEdited, onError, t],
+  );
+
+  const redact = useCallback(
+    async (page: number, area: RedactArea): Promise<boolean> => {
+      try {
+        setHistory(await engine.redact(info.docId, page, area));
+        bumpPage(page);
+        onEdited();
+        onRedacted();
+        return true;
+      } catch (e) {
+        onError(t.annotate.editFailed(errorText(e)));
+        bumpAll();
+        return false;
+      }
+    },
+    [engine, info.docId, bumpPage, bumpAll, onEdited, onRedacted, onError, t],
+  );
+  const redactRef = useRef(redact);
+  redactRef.current = redact;
+
   const undoRedo = useCallback(
     async (redo: boolean) => {
       if (!canEdit) return;
@@ -169,32 +217,53 @@ export function DocView(props: Props) {
 
   const chooseTool = useCallback(
     (next: Tool) => {
-      setAnnotating(true);
+      setBar((b) => (isEditTool(next) ? "edit" : next === "select" ? (b ?? "annotate") : "annotate"));
       setSelected(null);
       if (next === "signature") {
         setSigDialog({});
         return;
       }
-      // Highlighting text that is already selected.
+      // Highlighting (or blacking out) text that is already selected.
       const markup = MARKUP[next];
       const sel = selectionRef.current;
-      if (markup && sel?.quads.length && toolRef.current === "select") {
-        void edit(sel.page, { op: "create", annot: { type: markup, quads: sel.quads, color: colorOf(settings.colors[next]) } });
-        handleSelection(null);
-        return;
+      if (sel?.quads.length && toolRef.current === "select") {
+        if (markup) {
+          void edit(sel.page, { op: "create", annot: { type: markup, quads: sel.quads, color: colorOf(settings.colors[next]) } });
+          handleSelection(null);
+          return;
+        }
+        if (next === "redact") {
+          void redact(sel.page, { quads: sel.quads });
+          handleSelection(null);
+        }
       }
       setSignature(null);
       setTool(next);
     },
-    [edit, settings, handleSelection],
+    [edit, redact, settings, handleSelection],
   );
 
-  const closeAnnotate = useCallback(() => {
-    setAnnotating(false);
+  const closeBar = useCallback(() => {
+    setBar(null);
     setTool("select");
     setSignature(null);
     setSelected(null);
   }, []);
+
+  /** Opens (or closes, when it is open) a toolbar row; the editing row starts with editing text. */
+  const toggleBar = useCallback(
+    (which: "annotate" | "edit") => {
+      if (bar === which) {
+        closeBar();
+        return;
+      }
+      setBar(which);
+      setSignature(null);
+      setSelected(null);
+      setTool(which === "edit" ? "edittext" : "select");
+    },
+    [bar, closeBar],
+  );
 
   const placeSignatureImage = useCallback(
     async (sig: Signature, page: number, rect: Rect) => {
@@ -212,17 +281,22 @@ export function DocView(props: Props) {
         void placeSignatureImage(sig, field.page, fitInto(field.rect, sig.width / sig.height));
         return;
       }
-      setAnnotating(true);
+      setBar("annotate");
       setSignature(sig);
       setTool("signature");
     },
     [sigDialog, placeSignatureImage],
   );
 
-  // Text selected with a markup tool gets highlighted / underlined / struck out.
+  // Text selected with a markup tool gets highlighted / underlined / struck out (or blacked out).
   const onSelectionEnd = useCallback(() => {
     const markup = MARKUP[toolRef.current];
     const sel = selectionRef.current;
+    if (toolRef.current === "redact" && sel?.quads.length) {
+      void redactRef.current(sel.page, { quads: sel.quads });
+      handleSelection(null);
+      return;
+    }
     if (!markup || !sel?.quads.length) return;
     void editRef.current(sel.page, {
       op: "create",
@@ -253,6 +327,8 @@ export function DocView(props: Props) {
       },
       edit,
       setField,
+      editText,
+      redact,
       placeSignature: (page, rect) => {
         if (!signature) return;
         setSignature(null);
@@ -266,7 +342,22 @@ export function DocView(props: Props) {
       },
       pageLabel: (page) => info.pages[page]?.label ?? String(page + 1),
     }),
-    [engine, info, canEdit, activeTool, settings, signature, selected, draft, revs, edit, setField, placeSignatureImage],
+    [
+      engine,
+      info,
+      canEdit,
+      activeTool,
+      settings,
+      signature,
+      selected,
+      draft,
+      revs,
+      edit,
+      setField,
+      editText,
+      redact,
+      placeSignatureImage,
+    ],
   );
 
   // Reopened file: continue on the page where it was left.
@@ -450,9 +541,12 @@ export function DocView(props: Props) {
         onPrint={() => setDialog("print")}
         onOrganize={props.onOrganize}
         canAnnotate={canEdit}
-        annotating={annotating}
-        onAnnotate={() => (annotating ? closeAnnotate() : setAnnotating(true))}
+        annotating={bar === "annotate"}
+        editing={bar === "edit"}
+        onAnnotate={() => toggleBar("annotate")}
+        onEdit={() => toggleBar("edit")}
         onSign={() => chooseTool("signature")}
+        onProtect={() => setDialog("protect")}
         onToggleSidebar={onToggleSidebar}
         onGoToPage={goToPage}
         onZoomStep={zoomStep}
@@ -463,8 +557,9 @@ export function DocView(props: Props) {
         onExport={() => setDialog("export")}
       />
 
-      {annotating && (
+      {bar && (
         <AnnotateBar
+          mode={bar}
           tool={tool}
           settings={settings}
           canUndo={history.canUndo}
@@ -473,7 +568,7 @@ export function DocView(props: Props) {
           onSettings={setSettings}
           onUndo={() => void undoRedo(false)}
           onRedo={() => void undoRedo(true)}
-          onClose={closeAnnotate}
+          onClose={closeBar}
         />
       )}
 
@@ -515,6 +610,17 @@ export function DocView(props: Props) {
         <PrintDialog engine={engine} doc={info} currentPage={currentPage} onClose={closeDialog} />
       )}
       {active && sigDialog && <SignatureDialog onClose={() => setSigDialog(null)} onUse={onSignatureChosen} />}
+      {active && dialog === "protect" && (
+        <ProtectDialog
+          engine={engine}
+          docId={info.docId}
+          onChanged={(message) => {
+            onEdited();
+            onToast(message);
+          }}
+          onClose={closeDialog}
+        />
+      )}
     </section>
   );
 }

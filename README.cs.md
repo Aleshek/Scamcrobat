@@ -5,8 +5,8 @@
 [![CI](https://github.com/Aleshek/Scamcrobat/actions/workflows/ci.yml/badge.svg)](https://github.com/Aleshek/Scamcrobat/actions/workflows/ci.yml)
 [![Poslední verze](https://img.shields.io/github/v/release/Aleshek/Scamcrobat?label=verze)](https://github.com/Aleshek/Scamcrobat/releases/latest)
 
-Svobodný (AGPL-3.0) prohlížeč a editor PDF – komentáře, formuláře, podpisy a úpravy stránek
-bez předplatného, bez účtu a bez reklam.
+Svobodný (AGPL-3.0) prohlížeč a editor PDF – komentáře, formuláře, podpisy, opravy textu,
+začernění, ochrana heslem a úpravy stránek bez předplatného, bez účtu a bez reklam.
 Běží jako desktopová aplikace pro Windows (lze nastavit jako výchozí program pro `.pdf`)
 i jako webová stránka; obě verze sdílí stejný kód.
 
@@ -39,7 +39,7 @@ Soubory se nikam neodesílají – vše se zpracovává přímo ve vašem prohl�
 
 Aplikace je **česky** i **anglicky**; řídí se jazykem systému a přepnout jde na úvodní obrazovce.
 
-## Co umí (verze 0.4)
+## Co umí (verze 0.5)
 
 - otevření PDF dvojklikem, z dialogu (Ctrl+O) nebo přetažením do okna
 - **karty** pro více otevřených dokumentů (Ctrl+Tab přepnutí, Ctrl+W zavření, Ctrl+T nová karta);
@@ -57,6 +57,17 @@ Aplikace je **česky** i **anglicky**; řídí se jazykem systému a přepnout j
 - **podpis** (tlačítko „Podepsat“): podpis se nakreslí myší, perem nebo prstem, nebo se načte jeho
   fotka (papírové pozadí se odstraní), a pak stačí kliknout, kam patří, případně do pole pro podpis;
   na tomto zařízení si lze zapamatovat až čtyři podpisy
+- **oprava textu** (tlačítko „Upravit“): stačí kliknout na řádek a opravit překlep, datum, jméno
+  nebo částku; řádek se napíše znovu na stejné místo stejným písmem, velikostí i barvou. Písmena,
+  která ve vloženém písmu chybí, se doplní vestavěným písmem se stejnými šířkami (Helvetica/Arial,
+  Times, Courier – bezpatkové, patkové i neproporcionální, tučné i kurzíva podle originálu); Zpět/Znovu
+- **začernění** („Upravit“ → Začernit text / Začernit oblast): vše pod černým pruhem – text, pixely
+  obrázků, kresby, odkazy, komentáře i formulářová pole – se ze souboru opravdu odstraní, ne jen
+  zakryje. Do uložení jde začernění vrátit; před uložením se aplikace zeptá, protože pak už obsah
+  zmizí natrvalo
+- **ochrana heslem** (tlačítko se zámkem): heslo k otevření dokumentu, omezení tisku, kopírování
+  a změn chráněné heslem oprávnění, nebo obojí – šifrování AES 256 bitů při uložení; chráněný
+  dokument lze s heslem oprávnění změnit nebo ochranu odstranit
 - **klikací odkazy** – na jiné stránky dokumentu i na webové stránky
 - **nedávné soubory** na úvodní obrazovce (desktop); dokument se znovu otevře na stránce, kde jste skončili
 - **tisk** (Ctrl+P) – všechny stránky, aktuální nebo rozsah; stránky na šířku zůstanou na šířku
@@ -69,8 +80,10 @@ Aplikace je **česky** i **anglicky**; řídí se jazykem systému a přepnout j
 - **rozdělení PDF** po stránkách, po N stránkách nebo podle rozsahů a **extrakce** vybraných stránek
 - uložení (Ctrl+S) a Uložit jako (Ctrl+Shift+S); záložky, metadata a formuláře původního
   dokumentu zůstávají zachované, upozornění na neuložené změny při zavírání; komentáře a hodnoty
-  formulářů se do souboru pokud možno připisují na konec, takže původní obsah zůstane netknutý
-- dokumenty chráněné heslem
+  formulářů se do souboru pokud možno připisují na konec, takže původní obsah zůstane netknutý;
+  po začernění, opravě textu nebo změně ochrany se celý soubor zapíše znovu, aby v něm nic
+  odstraněného nezůstalo
+- otevírání dokumentů chráněných heslem
 - světlý i tmavý vzhled podle nastavení systému
 
 ## Vývoj
@@ -82,14 +95,7 @@ a automatické testy) je v [anglickém README](README.md#development).
 
 Hotovo: **0.1** prohlížeč a export do obrázků · **0.2** uspořádání stránek, slučování, rozdělení,
 ukládání · **0.3** tisk, karty, angličtina · **0.4** komentáře, formuláře, podpisy, odkazy,
-nedávné soubory
-
-**0.5 – začernění a opravy textu**
-- začernění – text a obrázky pod černým pruhem se opravdu odstraní, ne jen zakryjí
-- oprava existujícího textu po řádcích (překlepy, data, jména, částky): původní text se odstraní
-  a nový se napíše na jeho místo ve stejné velikosti a barvě; písmena, která ve vloženém písmu
-  chybí, se doplní písmem se stejnými šířkami (Liberation)
-- ochrana heslem a oprávnění (tisk, kopírování)
+nedávné soubory · **0.5** začernění, oprava textu po řádcích, ochrana heslem a oprávnění
 
 **Později**, zhruba v tomto pořadí:
 

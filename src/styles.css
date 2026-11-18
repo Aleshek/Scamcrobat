@@ -767,6 +767,70 @@ input {
   cursor: text;
 }
 
+.pl-capture.tool-edittext {
+  cursor: default;
+}
+
+.pl-capture.tool-redactarea {
+  cursor: crosshair;
+}
+
+/* ---------- Correcting text and blacking out ---------- */
+
+/* A line of text that can be corrected */
+.page-layer > .pl-line {
+  position: absolute;
+  border-radius: 2px;
+  cursor: text;
+  outline: 1px dashed rgba(37, 99, 235, 0.28);
+}
+
+.page-layer > .pl-line:hover {
+  background: rgba(37, 99, 235, 0.08);
+  outline: 1.5px solid rgba(37, 99, 235, 0.75);
+}
+
+.page-layer > .pl-line.disabled {
+  outline: 0;
+  cursor: not-allowed;
+}
+
+.page-layer > .pl-line.disabled:hover {
+  background: rgba(0, 0, 0, 0.04);
+  outline: 0;
+}
+
+.line-editor {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0 2px;
+  border: 0;
+  border-radius: 2px;
+  background: #fff;
+  box-shadow: 0 0 0 2px #2563eb, 0 6px 18px rgba(0, 0, 0, 0.18);
+  line-height: 1;
+  white-space: pre;
+  outline: none;
+  field-sizing: content;
+}
+
+.line-editor.light {
+  background: #333;
+}
+
+/* The area being blacked out */
+.page-layer > .pl-redact {
+  position: absolute;
+  background: rgba(0, 0, 0, 0.35);
+  outline: 1.5px dashed #000;
+  pointer-events: none;
+}
+
+.page-layer > .pl-redact.done {
+  background: #000;
+  outline: 0;
+}
+
 .pl-ghost {
   position: absolute;
   opacity: 0.65;
@@ -864,6 +928,12 @@ input {
   font-size: 12px;
   white-space: nowrap;
   text-overflow: ellipsis;
+}
+
+/* Blacking out removes content for good once saved. */
+.ab-hint.warn {
+  color: var(--danger);
+  font-weight: 600;
 }
 
 .ab-line {
@@ -1435,6 +1505,26 @@ input {
   display: flex;
   gap: 10px;
   align-items: center;
+}
+
+/* ---------- Password protection ---------- */
+
+.protect-fields {
+  display: grid;
+  gap: 6px;
+  margin: 4px 0 10px 26px;
+}
+
+.protect-fields .hint {
+  margin: 0;
+}
+
+.protect-perms {
+  margin: 0 0 4px 26px;
+}
+
+.protect-remove {
+  margin-right: auto;
 }
 
 .empty-card .btn.empty-secondary {

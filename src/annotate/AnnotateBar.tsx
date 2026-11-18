@@ -1,12 +1,15 @@
-/** Second toolbar row with the annotation tools. */
+/** Second toolbar row with the annotation tools, or the editing tools (text, redaction). */
 import {
   Highlighter,
   MousePointer2,
   PenLine,
+  RectangleHorizontal,
   Redo2,
   Signature,
   StickyNote,
   Strikethrough,
+  TextCursorInput,
+  TextSelect,
   Type,
   Underline,
   Undo2,
@@ -16,6 +19,7 @@ import { useT } from "../i18n";
 import { cssColor, INK_WIDTHS, PALETTE, TEXT_SIZES, type Tool, type ToolSettings } from "./tools";
 
 interface Props {
+  mode: "annotate" | "edit";
   tool: Tool;
   settings: ToolSettings;
   canUndo: boolean;
@@ -32,27 +36,37 @@ export function AnnotateBar(props: Props) {
   const t = useT();
   const a = t.annotate;
 
-  const tools: { id: Tool; icon: React.ReactNode; label: string }[] = [
-    { id: "select", icon: <MousePointer2 size={17} />, label: a.select },
-    { id: "highlight", icon: <Highlighter size={17} />, label: a.highlight },
-    { id: "underline", icon: <Underline size={17} />, label: a.underline },
-    { id: "strikeout", icon: <Strikethrough size={17} />, label: a.strikeout },
-    { id: "note", icon: <StickyNote size={17} />, label: a.note },
-    { id: "text", icon: <Type size={17} />, label: a.text },
-    { id: "ink", icon: <PenLine size={17} />, label: a.draw },
-    { id: "signature", icon: <Signature size={17} />, label: a.signature },
-  ];
+  const editing = props.mode === "edit";
+  const select = { id: "select" as Tool, icon: <MousePointer2 size={17} />, label: a.select };
+  /** Tools, with a separator before each group */
+  const tools: { id: Tool; icon: React.ReactNode; label: string; sep?: boolean }[] = editing
+    ? [
+        select,
+        { id: "edittext", icon: <TextCursorInput size={17} />, label: a.editText, sep: true },
+        { id: "redact", icon: <TextSelect size={17} />, label: a.redactText, sep: true },
+        { id: "redactarea", icon: <RectangleHorizontal size={17} fill="currentColor" />, label: a.redactArea },
+      ]
+    : [
+        select,
+        { id: "highlight", icon: <Highlighter size={17} />, label: a.highlight, sep: true },
+        { id: "underline", icon: <Underline size={17} />, label: a.underline },
+        { id: "strikeout", icon: <Strikethrough size={17} />, label: a.strikeout },
+        { id: "note", icon: <StickyNote size={17} />, label: a.note, sep: true },
+        { id: "text", icon: <Type size={17} />, label: a.text },
+        { id: "ink", icon: <PenLine size={17} />, label: a.draw },
+        { id: "signature", icon: <Signature size={17} />, label: a.signature, sep: true },
+      ];
 
-  const hasColor = tool !== "select" && tool !== "signature";
+  const hasColor = !editing && tool !== "select" && tool !== "signature";
   const color = settings.colors[tool];
   const setColor = (name: string) => props.onSettings({ ...settings, colors: { ...settings.colors, [tool]: name } });
 
   return (
-    <div className="annotate-bar" role="toolbar" aria-label={t.toolbar.annotate}>
+    <div className="annotate-bar" role="toolbar" aria-label={editing ? t.toolbar.edit : t.toolbar.annotate}>
       <div className="ab-group">
-        {tools.map((x, i) => (
+        {tools.map((x) => (
           <span key={x.id} className="ab-item">
-            {(i === 1 || i === 4 || i === 7) && <span className="tb-sep" />}
+            {x.sep && <span className="tb-sep" />}
             <button
               className={tool === x.id ? "tb-btn toggled" : "tb-btn"}
               aria-pressed={tool === x.id}
@@ -123,7 +137,9 @@ export function AnnotateBar(props: Props) {
         </div>
       )}
 
-      <span className="ab-hint">{a.hints[tool]}</span>
+      <span className={tool === "redact" || tool === "redactarea" ? "ab-hint warn" : "ab-hint"}>
+        {a.hints[tool]}
+      </span>
 
       <div className="ab-group">
         <button className="tb-btn" disabled={!props.canUndo} onClick={props.onUndo} title={a.undo} aria-label={a.undo}>
@@ -133,7 +149,12 @@ export function AnnotateBar(props: Props) {
           <Redo2 size={17} />
         </button>
         <span className="tb-sep" />
-        <button className="tb-btn" onClick={props.onClose} title={a.close} aria-label={a.close}>
+        <button
+          className="tb-btn"
+          onClick={props.onClose}
+          title={editing ? a.closeEdit : a.close}
+          aria-label={editing ? a.closeEdit : a.close}
+        >
           <X size={17} />
         </button>
       </div>

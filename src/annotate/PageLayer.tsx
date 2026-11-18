@@ -1,12 +1,12 @@
 /**
  * Interactive layer above a rendered page: links, form fields, selecting, moving and
- * resizing annotations, drawing, and writing notes and text boxes. The annotations
- * themselves are drawn by MuPDF into the page image; this layer only adds what the
- * user interacts with.
+ * resizing annotations, drawing, writing notes and text boxes, correcting lines of
+ * text and blacking out areas. The page content itself is drawn by MuPDF into the
+ * page image; this layer only adds what the user interacts with.
  */
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { Check, Pencil, Trash } from "lucide-react";
-import type { AnnotInfo, PageExtras, PageInfo, Point, Quad, Rect, WidgetInfo } from "../engine/types";
+import type { AnnotInfo, PageExtras, PageInfo, Point, Quad, Rect, TextLine, WidgetInfo } from "../engine/types";
 import { useT } from "../i18n";
 import { useEdit, type Draft, type EditApi } from "./context";
 import { colorOf, cssColor, PALETTE, rectAround, sameColor, TEXT_LINE_HEIGHT, textBoxRect } from "./tools";
@@ -99,13 +99,40 @@ export function PageLayer({ index, info, scale, extras, settled }: Props) {
   const [strokes, setStrokes] = useState<Stroke[]>([]);
   const drawing = useRef<Point[] | null>(null);
   const [ghost, setGhost] = useState<Point | null>(null);
+  /** Area being blacked out (dragged, or sent and waiting for the page to show it) */
+  const [area, setArea] = useState<{ from: Point; to: Point; done?: boolean } | null>(null);
+  /** Lines of text that can be corrected (edit text tool) */
+  const [lines, setLines] = useState<TextLine[]>([]);
+  /** The line being corrected and where it was clicked (client x) */
+  const [editing, setEditing] = useState<{ line: TextLine; x: number } | null>(null);
 
   // The page shows the result: drop previews of edits that are already done.
   useEffect(() => {
     if (settled < 0) return;
     setDrag((d) => (d?.committed ? null : d));
     setStrokes((list) => (list.some((s) => s.done) ? list.filter((s) => !s.done) : list));
+    setArea((a) => (a?.done ? null : a));
   }, [settled]);
+
+  const linesTool = ctx?.tool === "edittext";
+  const rev = ctx?.pageRev(index) ?? 0;
+  useEffect(() => {
+    if (!ctx || !linesTool) {
+      setLines([]);
+      setEditing(null);
+      return;
+    }
+    let alive = true;
+    ctx.engine.textLines(ctx.docId, index).then(
+      (list) => alive && setLines(list),
+      (e) => console.error(`Failed to read the text of page ${index + 1}`, e),
+    );
+    return () => {
+      alive = false;
+    };
+    // The lines change only with the page content (rev).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ctx?.engine, ctx?.docId, index, linesTool, rev]);
 
   if (!ctx) return null;
   const { tool } = ctx;
@@ -197,8 +224,14 @@ export function PageLayer({ index, info, scale, extras, settled }: Props) {
   // ---------- Placing new things (capture surface) ----------
 
   const onCapturePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (e.button !== 0 || tool !== "ink") return;
+    if (e.button !== 0) return;
     const p = toPdf(e.clientX, e.clientY);
+    if (tool === "redactarea") {
+      e.currentTarget.setPointerCapture(e.pointerId);
+      setArea({ from: p, to: p });
+      return;
+    }
+    if (tool !== "ink") return;
     e.currentTarget.setPointerCapture(e.pointerId);
     drawing.current = [p];
     setStrokes((list) => [...list, { points: [p] }]);
@@ -233,6 +266,10 @@ export function PageLayer({ index, info, scale, extras, settled }: Props) {
       setGhost(toPdf(e.clientX, e.clientY));
       return;
     }
+    if (tool === "redactarea") {
+      if (area && !area.done) setArea({ from: area.from, to: clampToPage(toPdf(e.clientX, e.clientY)) });
+      return;
+    }
     const pts = drawing.current;
     if (!pts) return;
     pts.push(toPdf(e.clientX, e.clientY));
@@ -244,6 +281,19 @@ export function PageLayer({ index, info, scale, extras, settled }: Props) {
   };
 
   const onCapturePointerUp = () => {
+    if (tool === "redactarea" && area && !area.done) {
+      const rect = rectOf(area.from, area.to);
+      // A click or a tiny drag blacks out nothing.
+      if ((rect[2] - rect[0]) * scale < CLICK_SLOP || (rect[3] - rect[1]) * scale < CLICK_SLOP) {
+        setArea(null);
+        return;
+      }
+      setArea({ ...area, done: true });
+      void ctx.redact(index, { rect }).then((ok) => {
+        if (!ok) setArea(null);
+      });
+      return;
+    }
     const pts = drawing.current;
     if (!pts) return;
     drawing.current = null;
@@ -264,8 +314,19 @@ export function PageLayer({ index, info, scale, extras, settled }: Props) {
       });
   };
 
+  const clampToPage = ([x, y]: Point): Point => [
+    Math.min(Math.max(x, info.x0), info.x0 + info.width),
+    Math.min(Math.max(y, info.y0), info.y0 + info.height),
+  ];
+
   const capture =
-    ctx.canEdit && (tool === "ink" || tool === "note" || tool === "text" || (tool === "signature" && ctx.signature));
+    ctx.canEdit &&
+    (tool === "ink" ||
+      tool === "note" ||
+      tool === "text" ||
+      tool === "edittext" ||
+      tool === "redactarea" ||
+      (tool === "signature" && ctx.signature));
 
   const sigAspect = ctx.signature ? ctx.signature.width / ctx.signature.height : 1;
   const inkColor = cssColor(colorOf(ctx.settings.colors.ink));
@@ -384,6 +445,44 @@ export function PageLayer({ index, info, scale, extras, settled }: Props) {
         </div>
       )}
 
+      {area && <div className={area.done ? "pl-redact done" : "pl-redact"} style={box(rectOf(area.from, area.to))} />}
+
+      {tool === "edittext" &&
+        ctx.canEdit &&
+        lines.map((line, i) =>
+          line === editing?.line ? null : (
+            <div
+              key={`t${i}`}
+              className={line.horizontal ? "pl-line" : "pl-line disabled"}
+              style={box(padLine(line))}
+              role="button"
+              aria-label={line.text}
+              aria-disabled={!line.horizontal}
+              title={line.horizontal ? t.annotate.editLine : t.annotate.cannotEditLine}
+              onMouseDown={(e) => {
+                e.stopPropagation();
+                e.preventDefault();
+              }}
+              onClick={(e) => line.horizontal && setEditing({ line, x: e.clientX })}
+            />
+          ),
+        )}
+
+      {editing && tool === "edittext" && (
+        <LineEditor
+          key={`${editing.line.bbox.join(",")}:${editing.line.text}`}
+          line={editing.line}
+          clickX={editing.x}
+          scale={scale}
+          box={box}
+          onDone={(text) => {
+            const { line } = editing;
+            setEditing(null);
+            if (text !== null && text !== line.text) void ctx.editText(index, line, text);
+          }}
+        />
+      )}
+
       {draft?.kind === "note" && <NotePopup key={`${draft.id ?? "new"}`} draft={draft} index={index} X={X} Y={Y} ctx={ctx} />}
       {draft?.kind === "text" && (
         <TextEditor key={`${draft.id ?? "new"}`} draft={draft} index={index} scale={scale} X={X} Y={Y} ctx={ctx} />
@@ -391,6 +490,19 @@ export function PageLayer({ index, info, scale, extras, settled }: Props) {
     </div>
   );
 }
+
+const rectOf = (a: Point, b: Point): Rect => [
+  Math.min(a[0], b[0]),
+  Math.min(a[1], b[1]),
+  Math.max(a[0], b[0]),
+  Math.max(a[1], b[1]),
+];
+
+/** The box of a line with a little room around it (easier to hit). */
+const padLine = (l: TextLine): Rect => {
+  const pad = l.size * 0.15;
+  return [l.bbox[0] - pad, l.bbox[1] - pad / 2, l.bbox[2] + pad, l.bbox[3] + pad / 2];
+};
 
 function signatureRect(at: Point, aspect: number): Rect {
   let w = SIGNATURE_WIDTH;
@@ -553,6 +665,96 @@ function Field(props: { w: WidgetInfo; index: number; scale: number; box(r: Rect
     <button className="pl-field sign" style={style} onMouseDown={stop} onClick={() => ctx.signField(index, w.rect)}>
       {t.annotate.signField}
     </button>
+  );
+}
+
+// ---------- Correcting a line of text ----------
+
+const FONT_FAMILIES: Record<TextLine["family"], string> = {
+  sans: 'Arial, Helvetica, "Liberation Sans", sans-serif',
+  serif: '"Times New Roman", Times, "Liberation Serif", serif',
+  mono: '"Courier New", Courier, "Liberation Mono", monospace',
+};
+
+/**
+ * Text field over a line, in roughly its font, size and color, with the caret where
+ * the line was clicked. `onDone` gets the new text (Enter, leaving the field) or null (Esc).
+ */
+function LineEditor(props: {
+  line: TextLine;
+  clickX: number;
+  scale: number;
+  box(r: Rect): CSSProperties;
+  onDone(text: string | null): void;
+}) {
+  const { line, scale } = props;
+  const t = useT();
+  const done = useRef(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const input = inputRef.current;
+    if (!input) return;
+    input.focus();
+    const cs = getComputedStyle(input);
+    const measure = document.createElement("canvas").getContext("2d");
+    if (!measure) return;
+    measure.font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+    const x = props.clickX - input.getBoundingClientRect().left - parseFloat(cs.paddingLeft) - parseFloat(cs.borderLeftWidth);
+    const text = input.value;
+    let best = text.length;
+    let bestDist = Infinity;
+    for (let k = 0; k <= text.length; k++) {
+      const d = Math.abs(measure.measureText(text.slice(0, k)).width - x);
+      if (d < bestDist) {
+        bestDist = d;
+        best = k;
+      }
+    }
+    input.setSelectionRange(best, best);
+    // Only when the editor opens.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const finish = (text: string | null) => {
+    if (done.current) return;
+    done.current = true;
+    props.onDone(text);
+  };
+  const style = props.box(line.bbox);
+  const [r, g, b] = line.color;
+  // Light text (e.g. white on a dark background) is edited on a dark field.
+  const light = 0.3 * r + 0.59 * g + 0.11 * b > 0.75;
+  return (
+    <input
+      ref={inputRef}
+      className={light ? "pl-popup line-editor light" : "pl-popup line-editor"}
+      defaultValue={line.text}
+      aria-label={t.annotate.lineText}
+      spellCheck={false}
+      style={{
+        left: Number(style.left) - 3,
+        top: style.top,
+        height: style.height,
+        minWidth: Number(style.width) + 6,
+        fontSize: line.size * scale,
+        fontFamily: FONT_FAMILIES[line.family],
+        fontWeight: line.bold ? 700 : 400,
+        fontStyle: line.italic ? "italic" : "normal",
+        color: cssColor(line.color),
+      }}
+      onMouseDown={(e) => e.stopPropagation()}
+      onBlur={(e) => finish(e.currentTarget.value)}
+      onKeyDown={(e) => {
+        if (e.key === "Escape") {
+          e.stopPropagation();
+          finish(null);
+        } else if (e.key === "Enter") {
+          e.preventDefault();
+          finish(e.currentTarget.value);
+        }
+      }}
+    />
   );
 }
 

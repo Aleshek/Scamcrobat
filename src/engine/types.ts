@@ -136,6 +136,54 @@ export type AnnotEdit =
   | { op: "setContents"; id: number; text: string; rect?: Rect }
   | { op: "setColor"; id: number; color: Color };
 
+/** An area to black out: the quads of selected text or a rectangle. */
+export type RedactArea = { quads: Quad[] } | { rect: Rect };
+
+/** A line of text on a page that can be corrected (see textedit.ts). */
+export interface TextLine {
+  bbox: Rect;
+  text: string;
+  /** Largest font size on the line */
+  size: number;
+  family: "sans" | "serif" | "mono";
+  bold: boolean;
+  italic: boolean;
+  color: Color;
+  /** Written horizontally from left to right (only such lines can be edited) */
+  horizontal: boolean;
+}
+
+/** What a protected document allows without its permissions password. */
+export interface Permissions {
+  print: boolean;
+  copy: boolean;
+  /** Changes: editing, comments, form filling, organizing pages */
+  edit: boolean;
+}
+
+/** New password protection, applied when the document is saved. */
+export interface Protection {
+  /** Password to open the document; "" = none */
+  openPassword: string;
+  /** Password to change the protection; "" = no restrictions */
+  permissionsPassword: string;
+  /** Allowed without the permissions password */
+  permissions: Permissions;
+}
+
+export interface SecurityInfo {
+  /** Encryption of the document as it is now, e.g. "AES 256-bit"; null = none */
+  method: string | null;
+  /** A password is needed to open the document */
+  openPassword: boolean;
+  /** What is allowed without the permissions password (all true when not restricted) */
+  permissions: Permissions;
+  /** The protection can be changed: the document has no restrictions or the permissions password is known */
+  canChange: boolean;
+  /** Protection to apply at the next save: undefined = keep as it is, null = remove */
+  pending?: Protection | null;
+}
+
 /** State of the edit history after a change; `id` = the annotation that was created. */
 export interface EditState {
   canUndo: boolean;
@@ -168,6 +216,17 @@ export interface EngineApi {
   editAnnot: [{ docId: number; page: number; edit: AnnotEdit }, EditState];
   /** Sets a form field: text or choice value, or `toggle` for check boxes and radio buttons. */
   setField: [{ docId: number; page: number; id: number; value?: string; toggle?: boolean }, EditState];
+  /** Blacks out an area: removes text, images and drawings under it for good (once saved). */
+  redact: [{ docId: number; page: number; area: RedactArea }, EditState];
+  /** Lines of text on a page that can be corrected. */
+  textLines: [{ docId: number; page: number }, TextLine[]];
+  /** Replaces the text of a line (`line` as returned by textLines). */
+  editText: [{ docId: number; page: number; line: { bbox: Rect; text: string }; text: string }, EditState];
+  security: [{ docId: number }, SecurityInfo];
+  /** Checks the permissions password, so the protection can be changed. */
+  unlock: [{ docId: number; password: string }, SecurityInfo];
+  /** Sets the protection applied at the next save; null removes it. */
+  protect: [{ docId: number; protection: Protection | null }, SecurityInfo];
   undo: [{ docId: number }, EditState];
   redo: [{ docId: number }, EditState];
   history: [{ docId: number }, EditState];
@@ -183,13 +242,17 @@ export interface EngineRequest<M extends EngineMethod = EngineMethod> {
 
 export type EngineResponse =
   | { id: number; ok: true; result: unknown }
-  | { id: number; ok: false; error: { message: string; code?: string } };
+  | { id: number; ok: false; error: { message: string; code?: string; detail?: string } };
 
-/** Error from the engine; `code` (e.g. PASSWORD_REQUIRED) is translated by the UI. */
+/**
+ * Error from the engine; `code` (e.g. PASSWORD_REQUIRED) is translated by the UI,
+ * `detail` fills in the translated message (e.g. the character that cannot be written).
+ */
 export class EngineError extends Error {
   constructor(
     message: string,
     public code?: string,
+    public detail?: string,
   ) {
     super(message);
     this.name = "EngineError";

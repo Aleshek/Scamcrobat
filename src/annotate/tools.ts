@@ -1,7 +1,24 @@
 /** Annotation tools, their colors and settings remembered between sessions. */
 import type { Color, MarkupType, Point, Rect } from "../engine/types";
 
-export type Tool = "select" | "highlight" | "underline" | "strikeout" | "note" | "text" | "ink" | "signature";
+export type Tool =
+  | "select"
+  | "highlight"
+  | "underline"
+  | "strikeout"
+  | "note"
+  | "text"
+  | "ink"
+  | "signature"
+  // Editing the page content: correcting lines of text, blacking out (redaction)
+  | "edittext"
+  | "redact"
+  | "redactarea";
+
+/** The tools of the editing bar (the rest belong to the annotation bar, "select" to both). */
+export const EDIT_TOOLS: Tool[] = ["edittext", "redact", "redactarea"];
+
+export const isEditTool = (tool: Tool) => EDIT_TOOLS.includes(tool);
 
 export const MARKUP: Partial<Record<Tool, MarkupType>> = {
   highlight: "Highlight",

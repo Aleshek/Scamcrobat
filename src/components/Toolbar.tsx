@@ -4,10 +4,12 @@ import {
   ChevronLeft,
   ChevronRight,
   ChevronUp,
+  FilePenLine,
   FolderOpen,
   Highlighter,
   ImageDown,
   LayoutGrid,
+  LockKeyhole,
   Maximize,
   MoveHorizontal,
   PanelLeft,
@@ -47,7 +49,12 @@ interface Props {
   /** The annotation tools are shown */
   annotating?: boolean;
   onAnnotate?(): void;
+  /** The editing tools (text, redaction) are shown */
+  editing?: boolean;
+  onEdit?(): void;
   onSign?(): void;
+  /** Password protection dialog */
+  onProtect?(): void;
   onToggleSidebar(): void;
   onGoToPage(index: number): void;
   onZoomStep(dir: 1 | -1): void;
@@ -85,6 +92,14 @@ export function Toolbar(props: Props) {
         </button>
         <button className="tb-btn" onClick={props.onPrint} disabled={!hasDoc} title={t.toolbar.print}>
           <Printer size={18} />
+        </button>
+        <button
+          className="tb-btn"
+          onClick={props.onProtect}
+          disabled={!props.canAnnotate}
+          title={hasDoc && !props.canAnnotate ? t.toolbar.organizePdfOnly : t.toolbar.protect}
+        >
+          <LockKeyhole size={18} />
         </button>
         <div className="tb-sep" />
         <button
@@ -167,6 +182,17 @@ export function Toolbar(props: Props) {
       >
         <Highlighter size={18} />
         <span className="tb-text l3">{t.toolbar.annotate}</span>
+      </button>
+
+      <button
+        className={props.editing ? "tb-btn toggled" : "tb-btn"}
+        disabled={!props.canAnnotate}
+        onClick={props.onEdit}
+        aria-pressed={!!props.editing}
+        title={hasDoc && !props.canAnnotate ? t.toolbar.organizePdfOnly : t.toolbar.editTitle}
+      >
+        <FilePenLine size={18} />
+        <span className="tb-text l3">{t.toolbar.edit}</span>
       </button>
 
       <button

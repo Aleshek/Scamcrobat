@@ -5,6 +5,8 @@
  * Errors carry a `code` that the UI translates; the messages are only for logs.
  */
 import * as mupdf from "mupdf";
+import { CodedError } from "./coded";
+import { readTextLines, replaceTextLine } from "./textedit";
 import type {
   AnnotEdit,
   AnnotInfo,
@@ -21,10 +23,14 @@ import type {
   PageExtras,
   PageInfo,
   PageRef,
+  Permissions,
   Point,
+  Protection,
   Quad,
+  RedactArea,
   Rect,
   SearchHit,
+  SecurityInfo,
   WidgetInfo,
   WidgetKind,
 } from "./types";
@@ -34,15 +40,6 @@ interface WorkerScope {
   postMessage(message: EngineResponse, transfer?: Transferable[]): void;
 }
 const scope = self as unknown as WorkerScope;
-
-class CodedError extends Error {
-  constructor(
-    message: string,
-    public code: string,
-  ) {
-    super(message);
-  }
-}
 
 interface DocEntry {
   doc: mupdf.Document;
@@ -54,6 +51,17 @@ interface DocEntry {
   bytes: Uint8Array;
   password?: string;
   edited: boolean;
+  /**
+   * Content was removed (redaction, text correction): the next save must write the
+   * whole file again, an incremental save would keep the old content in it.
+   */
+  rewrite: boolean;
+  /** Opened with full rights (not protected, or the permissions password is known) */
+  owner: boolean;
+  /** The permissions password, when the document is protected and it is known */
+  ownerPassword?: string;
+  /** Protection to apply at the next save: undefined = keep as it is, null = remove */
+  protection?: Protection | null;
 }
 
 const docs = new Map<number, DocEntry>();
@@ -95,6 +103,39 @@ function openBytes(bytes: Uint8Array, name: string, password?: string): mupdf.Do
   return doc;
 }
 
+const isEncrypted = (doc: mupdf.Document) => (doc.getMetaData("encryption") ?? "None") !== "None";
+
+/**
+ * What a password unlocks in a document's bytes: 2 = opening, 4 = full rights.
+ * Checked on a separate instance: a wrong password spoils an authenticated document.
+ */
+function checkPassword(bytes: Uint8Array, password: string): number {
+  const probe = mupdf.Document.openDocument(bytes, "application/pdf");
+  try {
+    return probe.authenticatePassword(password);
+  } finally {
+    probe.destroy();
+  }
+}
+
+function newEntry(doc: mupdf.Document, bytes: Uint8Array, password?: string, ownerPassword?: string): DocEntry {
+  let owner = true;
+  if (doc.asPDF() && isEncrypted(doc)) {
+    // Full rights with the password used to open it (or none), or with the one known from before.
+    owner = (checkPassword(bytes, password ?? "") & 4) !== 0;
+    if (!owner && ownerPassword) owner = (checkPassword(bytes, ownerPassword) & 4) !== 0;
+  }
+  return {
+    doc,
+    bytes,
+    password,
+    edited: false,
+    rewrite: false,
+    owner,
+    ownerPassword: owner ? ownerPassword : undefined,
+  };
+}
+
 /** Registers an open document and returns information about it for the UI. */
 function registerDoc(doc: mupdf.Document, bytes: Uint8Array, password?: string): DocInfo {
   const pageCount = doc.countPages();
@@ -121,7 +162,7 @@ function registerDoc(doc: mupdf.Document, bytes: Uint8Array, password?: string):
   const docId = nextDocId++;
   // Undo and redo of annotation and form edits.
   doc.asPDF()?.enableJournal();
-  docs.set(docId, { doc, bytes, password, edited: false });
+  docs.set(docId, newEntry(doc, bytes, password));
   return { docId, pageCount, pages, title, outline, isPdf: doc.asPDF() !== null };
 }
 
@@ -192,25 +233,85 @@ function buildPdf(refs: PageRef[], prefer?: number): Uint8Array {
   }
 }
 
+// Permission bits of the PDF standard security handler (the P value is signed).
+const P_BASE = -3904; // reserved bits set, every permission cleared
+const P_PRINT = 4 | 2048; // print, print in high quality
+const P_COPY = 16;
+const P_EDIT = 8 | 32 | 256 | 1024; // modify, annotate, fill forms, assemble pages
+const P_ACCESSIBILITY = 512; // text for screen readers stays allowed
+
+function permissionBits(p: Permissions): number {
+  return P_BASE | P_ACCESSIBILITY | (p.print ? P_PRINT : 0) | (p.copy ? P_COPY : 0) | (p.edit ? P_EDIT : 0);
+}
+
+/** Save options that apply new protection (AES-256), or remove it (null). */
+function protectionOptions(p: Protection | null): Record<string, unknown> {
+  if (!p) return { encrypt: "none" };
+  const restricted = p.permissionsPassword !== "";
+  return {
+    encrypt: "aes-256",
+    "user-password": p.openPassword,
+    // Without restrictions the open password gives full rights (an empty owner password
+    // would let anyone open the document).
+    "owner-password": restricted ? p.permissionsPassword : p.openPassword,
+    permissions: restricted ? permissionBits(p.permissions) : -4,
+  };
+}
+
 /**
  * Up to date content of a document: when annotations or form fields were edited,
  * writes the document again. Saving appends the changes to the original file
- * (incremental save) when possible, so digital signatures stay valid. The document
- * is then reopened from the new content, so the next save appends to it (MuPDF
- * would otherwise append only the changes made since the previous save).
+ * (incremental save) when possible, so digital signatures stay valid. After a
+ * redaction, a text correction or a change of the protection, the whole file is
+ * written again instead, garbage collected, so that nothing removed stays in it.
+ * The document is then reopened from the new content, so the next save appends to
+ * it (MuPDF would otherwise append only the changes made since the previous save).
  */
 function snapshot(docId: number): Uint8Array {
   const entry = getEntry(docId);
   if (!entry.edited) return entry.bytes;
   const pdf = entry.doc.asPDF()!;
-  const options = pdf.canBeSavedIncrementally() ? "incremental,compress" : "garbage=deduplicate,compress";
+  let options: string;
+  let password = entry.password;
+  let ownerPassword = entry.ownerPassword;
+  if (entry.protection !== undefined) {
+    const p = entry.protection;
+    // (JSON, as passwords may contain commas)
+    options = JSON.stringify({ ...protectionOptions(p), garbage: "deduplicate", compress: true });
+    password = p?.openPassword || undefined;
+    ownerPassword = p ? p.permissionsPassword || p.openPassword : undefined;
+  } else if (entry.rewrite || !pdf.canBeSavedIncrementally()) {
+    options = "garbage=deduplicate,compress";
+  } else {
+    options = "incremental,compress";
+  }
   const bytes = pdf.saveToBuffer(options).asUint8Array().slice();
-  const fresh = openBytes(bytes, "application/pdf", entry.password);
+  const fresh = openBytes(bytes, "application/pdf", password);
   fresh.asPDF()?.enableJournal();
   dropStextFor(docId);
   entry.doc.destroy();
-  docs.set(docId, { doc: fresh, bytes, password: entry.password, edited: false });
+  docs.set(docId, newEntry(fresh, bytes, password, ownerPassword));
   return bytes;
+}
+
+function securityOf(entry: DocEntry): SecurityInfo {
+  const pdf = entry.doc.asPDF();
+  const all: Permissions = { print: true, copy: true, edit: true };
+  if (!pdf || !isEncrypted(entry.doc)) {
+    return { method: null, openPassword: false, permissions: all, canChange: !!pdf, pending: entry.protection };
+  }
+  const info = entry.doc.getMetaData("encryption") ?? "";
+  const m = /(\d+)-bit (\w+)/.exec(info);
+  const p = pdf.getTrailer().get("Encrypt").get("P");
+  const bits = p.isNumber() ? p.asNumber() : -1;
+  const restricted = { print: (bits & 4) !== 0, copy: (bits & 16) !== 0, edit: (bits & 8) !== 0 };
+  return {
+    method: m ? `${m[2]} ${m[1]}-bit` : info,
+    openPassword: !!entry.password,
+    permissions: restricted,
+    canChange: entry.owner,
+    pending: entry.protection,
+  };
 }
 
 function getStext(docId: number, pageIndex: number): mupdf.StructuredText {
@@ -504,6 +605,39 @@ function applyEdit(page: mupdf.PDFPage, edit: AnnotEdit): number | undefined {
   a.update();
 }
 
+const intersects = (a: Rect, b: number[]) => a[0] < b[2] && b[0] < a[2] && a[1] < b[3] && b[1] < a[3];
+
+function quadBounds(q: Quad): Rect {
+  const xs = [q[0], q[2], q[4], q[6]];
+  const ys = [q[1], q[3], q[5], q[7]];
+  return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
+}
+
+/**
+ * Blacks out an area: text, images (their pixels) and drawings under it are removed
+ * from the page content, and links too. Comments and form fields over it are deleted,
+ * as they would still show (or hold) what was there.
+ */
+function redact(page: mupdf.PDFPage, area: RedactArea) {
+  const rects = "quads" in area ? area.quads.map(quadBounds) : [area.rect];
+  for (const w of page.getWidgets()) {
+    if (rects.some((r) => intersects(r, w.getRect()))) page.deleteAnnotation(w);
+  }
+  for (const a of page.getAnnotations()) {
+    if (a.getType() === "Popup") continue;
+    if (rects.some((r) => intersects(r, a.getBounds()))) page.deleteAnnotation(a);
+  }
+  const annot = page.createAnnotation("Redact");
+  if ("quads" in area) annot.setQuadPoints(area.quads);
+  else annot.setRect(area.rect);
+  annot.applyRedaction(
+    1,
+    mupdf.PDFPage.REDACT_IMAGE_PIXELS,
+    mupdf.PDFPage.REDACT_LINE_ART_REMOVE_IF_COVERED,
+    mupdf.PDFPage.REDACT_TEXT_REMOVE,
+  );
+}
+
 function historyOf(docId: number, id?: number): EditState {
   const pdf = getDoc(docId).asPDF();
   if (!pdf) return { canUndo: false, canRedo: false };
@@ -676,6 +810,52 @@ const handlers: { [M in EngineMethod]: Handler<M> } = {
     return [historyOf(docId)];
   },
 
+  redact({ docId, page, area }) {
+    editPage(docId, page, "redact", (pg) => redact(pg, area));
+    getEntry(docId).rewrite = true;
+    return [historyOf(docId)];
+  },
+
+  textLines({ docId, page }) {
+    const pg = getPdf(docId).loadPage(page);
+    try {
+      return [readTextLines(pg)];
+    } finally {
+      pg.destroy();
+    }
+  },
+
+  editText({ docId, page, line, text }) {
+    const pdf = getPdf(docId);
+    if (editPage(docId, page, "text", (pg) => replaceTextLine(pdf, pg, line, text))) {
+      getEntry(docId).rewrite = true;
+    }
+    return [historyOf(docId)];
+  },
+
+  security({ docId }) {
+    return [securityOf(getEntry(docId))];
+  },
+
+  unlock({ docId, password }) {
+    const entry = getEntry(docId);
+    if (!entry.owner) {
+      if (!(checkPassword(entry.bytes, password) & 4)) throw new CodedError("Incorrect password", "PASSWORD_WRONG");
+      entry.owner = true;
+      entry.ownerPassword = password;
+    }
+    return [securityOf(entry)];
+  },
+
+  protect({ docId, protection }) {
+    getPdf(docId);
+    const entry = getEntry(docId);
+    if (!entry.owner) throw new CodedError("The permissions password is needed", "PASSWORD_REQUIRED");
+    entry.protection = protection;
+    entry.edited = true;
+    return [securityOf(entry)];
+  },
+
   undo({ docId }) {
     return [undoRedo(docId, false)];
   },
@@ -698,7 +878,8 @@ scope.onmessage = async (e) => {
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     const code = err instanceof CodedError ? err.code : undefined;
-    scope.postMessage({ id, ok: false, error: { message, code } });
+    const detail = err instanceof CodedError ? err.detail : undefined;
+    scope.postMessage({ id, ok: false, error: { message, code, detail } });
   }
 };
 

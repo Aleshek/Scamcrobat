@@ -11,6 +11,9 @@ import {
   type ImageFormat,
   type PageRef,
   type Point,
+  type Protection,
+  type RedactArea,
+  type Rect,
   type RenderResult,
 } from "./types";
 
@@ -70,7 +73,7 @@ export class PdfEngine {
       if (!p) return;
       this.pending.delete(msg.id);
       if (msg.ok) p.resolve(msg.result);
-      else p.reject(new EngineError(msg.error.message, msg.error.code));
+      else p.reject(new EngineError(msg.error.message, msg.error.code, msg.error.detail));
     };
     this.worker.onerror = (e) => {
       const err = new EngineError(`PDF engine failed: ${e.message || "unknown error"}`, "WORKER");
@@ -147,6 +150,31 @@ export class PdfEngine {
 
   setField(docId: number, page: number, id: number, change: { value?: string; toggle?: boolean }) {
     return this.call("setField", { docId, page, id, ...change });
+  }
+
+  redact(docId: number, page: number, area: RedactArea) {
+    return this.call("redact", { docId, page, area });
+  }
+
+  textLines(docId: number, page: number) {
+    return this.call("textLines", { docId, page });
+  }
+
+  editText(docId: number, page: number, line: { bbox: Rect; text: string }, text: string) {
+    return this.call("editText", { docId, page, line, text });
+  }
+
+  security(docId: number) {
+    return this.call("security", { docId });
+  }
+
+  unlock(docId: number, password: string) {
+    return this.call("unlock", { docId, password });
+  }
+
+  /** Protection applied at the next save; null removes it. */
+  protect(docId: number, protection: Protection | null) {
+    return this.call("protect", { docId, protection });
   }
 
   undo(docId: number) {

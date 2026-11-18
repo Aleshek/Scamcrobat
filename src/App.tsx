@@ -218,6 +218,18 @@ export function App() {
     async (tabId: number, asNew: boolean): Promise<boolean> => {
       const d = tabsRef.current.tabs.find((x) => x.id === tabId)?.doc;
       if (!d) return false;
+      if (d.redacted) {
+        // Blacked-out content disappears from the file for good.
+        const answer = await ask({
+          title: t.app.redactSaveTitle,
+          message: <p>{t.app.redactSaveMessage}</p>,
+          options: [
+            { value: "cancel", label: t.common.cancel },
+            { value: "save", label: t.common.save, kind: "primary" },
+          ],
+        });
+        if (answer !== "save") return false;
+      }
       try {
         const data = await engine.getBytes(d.info.docId);
         let { name, path } = d;
@@ -234,7 +246,7 @@ export function App() {
         commit((s) =>
           setTabDoc(s, tabId, (cur) =>
             cur.info.docId === d.info.docId
-              ? { ...cur, name, path, dir: path ? dirname(path) : cur.dir, dirty: false }
+              ? { ...cur, name, path, dir: path ? dirname(path) : cur.dir, dirty: false, redacted: false }
               : cur,
           ),
         );
@@ -248,7 +260,7 @@ export function App() {
         setBusy(null);
       }
     },
-    [engine, commit, t],
+    [engine, ask, commit, t],
   );
 
   const closeTab = useCallback(
@@ -284,6 +296,16 @@ export function App() {
       commit((s) => {
         const d = s.tabs.find((x) => x.id === tabId)?.doc;
         return d && !d.dirty ? setTabDoc(s, tabId, (cur) => ({ ...cur, dirty: true })) : s;
+      }),
+    [commit],
+  );
+
+  /** Something was blacked out in a document. */
+  const markRedacted = useCallback(
+    (tabId: number) =>
+      commit((s) => {
+        const d = s.tabs.find((x) => x.id === tabId)?.doc;
+        return d && !d.redacted ? setTabDoc(s, tabId, (cur) => ({ ...cur, dirty: true, redacted: true })) : s;
       }),
     [commit],
   );
@@ -607,6 +629,7 @@ export function App() {
               onSave={(asNew) => void saveDoc(tab.id, asNew)}
               onOrganize={startOrganize}
               onEdited={() => markEdited(tab.id)}
+              onRedacted={() => markRedacted(tab.id)}
               onToast={setToast}
               onError={setError}
             />
