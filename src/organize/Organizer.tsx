@@ -74,7 +74,7 @@ interface Props {
   baseName: string;
   baseDir?: string;
   /** Opens files as page sources (asking for passwords); reports errors itself. */
-  openSources(files: OpenedFile[]): Promise<{ info: DocInfo; file: OpenedFile }[]>;
+  openSources(files: OpenedFile[]): Promise<{ info: DocInfo; file: OpenedFile; image?: boolean }[]>;
   onApply(result: OrganizeResult, opts?: { save?: boolean }): void;
   onCancel(result: OrganizeResult): void;
   onDirtyChange(dirty: boolean): void;
@@ -200,6 +200,7 @@ export function Organizer(props: Props) {
             path: o.file.path,
             owned: true,
             hasOutline: o.info.outline.length > 0,
+            image: o.image,
           })),
         ]);
         const added = opened.flatMap((o) => pagesFromDoc(o.info));

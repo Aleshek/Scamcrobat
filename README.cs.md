@@ -6,7 +6,8 @@
 [![Poslední verze](https://img.shields.io/github/v/release/Aleshek/Scamcrobat?label=verze)](https://github.com/Aleshek/Scamcrobat/releases/latest)
 
 Svobodný (AGPL-3.0) prohlížeč a editor PDF – komentáře, formuláře, podpisy, opravy textu,
-začernění, ochrana heslem a úpravy stránek bez předplatného, bez účtu a bez reklam.
+začernění, ochrana heslem, úpravy stránek, PDF z obrázků a zmenšení souborů bez předplatného,
+bez účtu a bez reklam.
 Běží jako desktopová aplikace pro Windows (lze nastavit jako výchozí program pro `.pdf`)
 i jako webová stránka; obě verze sdílí stejný kód.
 
@@ -29,7 +30,8 @@ i jako webová stránka; obě verze sdílí stejný kód.
 Instaluje se jen pro aktuálního uživatele (nepotřebuje práva správce) a zaregistruje se
 jako program pro `.pdf`. Windows 11 nedovolí aplikacím nastavit se jako výchozí samy, takže
 po instalaci: pravým tlačítkem na PDF → Otevřít v programu → Zvolit jinou aplikaci →
-Scamcrobat → Vždy.
+Scamcrobat → Vždy. U obrázků (JPG, PNG, GIF, BMP, TIFF, WebP) se Scamcrobat jen přidá do nabídky
+„Otevřít v programu“ – udělá z nich PDF – a nikdy se nestane jejich výchozím programem.
 
 Instalátor zatím není digitálně podepsaný, proto Windows SmartScreen při prvním spuštění
 zobrazí varování („Další informace → Přesto spustit“).
@@ -39,9 +41,15 @@ Soubory se nikam neodesílají – vše se zpracovává přímo ve vašem prohl�
 
 Aplikace je **česky** i **anglicky**; řídí se jazykem systému a přepnout jde na úvodní obrazovce.
 
-## Co umí (verze 0.6)
+## Co umí (verze 0.7)
 
 - otevření PDF dvojklikem, z dialogu (Ctrl+O) nebo přetažením do okna
+- **PDF z obrázků**: obrázky JPG, PNG, GIF, BMP, TIFF (všechny jeho stránky) a WebP otevřené
+  z dialogu, přetažené do okna nebo poslané z Průzkumníka přes „Otevřít v programu“ se stanou
+  novým PDF, každý obrázek jednou stránkou – více najednou dá jedno PDF, v pořadí podle názvů
+  („Vytvořit PDF z obrázků“ na úvodní obrazovce). Skeny si nechají svou velikost; fotky a snímky
+  obrazovky se vejdou na A4 (v USA a Kanadě Letter) s okrajem 10 mm. Fotky JPEG se do PDF vloží
+  tak, jak jsou, bez ztráty kvality
 - **karty** pro více otevřených dokumentů (Ctrl+Tab přepnutí, Ctrl+W zavření, Ctrl+T nová karta);
   další PDF otevřené z Průzkumníka přibude jako karta do běžícího okna
 - plynulé zobrazení všech stránek, náhledy stránek a záložky (osnova dokumentu)
@@ -83,10 +91,17 @@ Aplikace je **česky** i **anglicky**; řídí se jazykem systému a přepnout j
 - **export stránek do JPG / PNG / WebP** (Ctrl+E) – volba DPI, kvality, rozsahu stránek
   a názvů souborů bez diakritiky pro web
 - **uspořádání stránek** (tlačítko „Uspořádat stránky“): otáčení, mazání, přeskládání
-  přetažením, vložení stránek z jiného PDF (i přetažením souboru přímo mezi stránky),
+  přetažením, vložení stránek z jiného PDF nebo obrázků (i přetažením souboru přímo mezi stránky),
   Zpět/Znovu (Ctrl+Z / Ctrl+Y)
-- **sloučení více PDF do jednoho** (na úvodní obrazovce nebo „Vložit PDF“); záložky všech
-  slučovaných souborů zůstanou zachované, každý soubor pod záložkou se svým názvem
+- **sloučení více PDF do jednoho** (na úvodní obrazovce nebo „Vložit soubor“), i s obrázky;
+  záložky všech slučovaných souborů zůstanou zachované, každý soubor pod záložkou se svým názvem
+- **zmenšení velikosti souboru** (tlačítko vedle zámku): menší kopie dokumentu – obrázky
+  vykreslené ve vyšším rozlišení, než je potřeba, se zmenší na 100, 150 nebo 300 ppi a uloží jako
+  JPEG (nebo zůstanou, jak jsou), nepoužívané a zdvojené objekty, soukromá data jiných programů
+  a vložené náhledy se odstraní, písma si nechají jen použité znaky a vše se zkomprimuje. Dialog
+  ukáže velikost před a po, pak kopii uloží nebo otevře v nové kartě; samotný dokument zůstane,
+  jak je. Zabezpečený dokument zůstane zabezpečený se stejnými hesly a je k tomu potřeba
+  oprávnění ke změnám
 - **ořez stránek** („Upravit“ → Oříznout stránky): stačí tažením označit, co má zůstat, okraje lze
   doladit v milimetrech a ořez použít na tuto stránku, všechny stránky nebo rozsah; mění se jen
   viditelná oblast, obsah mimo ni v souboru zůstává
@@ -115,13 +130,13 @@ ukládání · **0.3** tisk, karty, angličtina · **0.4** komentáře, formulá
 nedávné soubory · **0.5** začernění, oprava textu po řádcích, ochrana heslem a oprávnění ·
 **0.5.1** dodržování omezení zabezpečených dokumentů · **0.6** otáčení zobrazení, dvě stránky
 vedle sebe, celá obrazovka, záložky při slučování, ořez stránek, vodoznak, číslování stránek ·
-**0.6.1** vyhledávání najde všechna slova i na už zobrazených stránkách
+**0.6.1** vyhledávání najde všechna slova i na už zobrazených stránkách · **0.7** PDF z obrázků,
+zmenšení velikosti souboru
 
 **Později**, zhruba v tomto pořadí:
 
 | Funkce | Náročnost |
 |---|---|
-| Obrázky → PDF, komprese PDF | střední |
 | Porovnání dvou verzí dokumentu | střední |
 | OCR naskenovaných dokumentů | větší |
 | Ověření elektronického podpisu, podepisování certifikátem | větší |

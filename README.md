@@ -6,7 +6,8 @@
 [![Latest release](https://img.shields.io/github/v/release/Aleshek/Scamcrobat?label=release)](https://github.com/Aleshek/Scamcrobat/releases/latest)
 
 A free (AGPL-3.0) PDF viewer and editor – comments, forms, signatures, text corrections,
-redaction, password protection and page editing with no subscription, no account and no ads.
+redaction, password protection, page editing, PDFs from images and smaller files with no
+subscription, no account and no ads.
 It runs as a Windows desktop app (it can be your default program for `.pdf` files)
 and as a web page; both versions share the same code.
 
@@ -30,6 +31,8 @@ and as a web page; both versions share the same code.
 It installs for the current user only (no administrator rights needed) and registers itself
 as a program for `.pdf` files. Windows 11 does not let apps make themselves the default, so
 after installing: right-click a PDF → Open with → Choose another app → Scamcrobat → Always.
+For images (JPG, PNG, GIF, BMP, TIFF, WebP) Scamcrobat is only added to "Open with" – it makes
+a PDF of them – and never becomes their default app.
 
 The installer is not digitally signed yet, so Windows SmartScreen shows a warning the first
 time it runs ("More info → Run anyway").
@@ -40,9 +43,14 @@ Your files are never uploaded – everything is processed right in your browser.
 The app is available in **English** and **Czech**; it follows the system language and can be
 switched on the start page.
 
-## Features (version 0.6)
+## Features (version 0.7)
 
 - open PDFs by double click, from the dialog (Ctrl+O) or by dropping them into the window
+- **PDF from images**: JPG, PNG, GIF, BMP, TIFF (every page of it) and WebP images opened from the
+  dialog, dropped into the window or sent with "Open with" from Explorer become a new PDF, one page
+  per image – several at once make one PDF, in the order of their names ("Create PDF from images"
+  on the start page). Scans keep their size; photos and screenshots are fitted on A4 (Letter in
+  the US and Canada) with a 10 mm margin. JPEG photos go into the PDF as they are, with no loss
 - **tabs** for several open documents (Ctrl+Tab to switch, Ctrl+W to close, Ctrl+T for a new tab);
   opening another PDF from Explorer adds a tab to the running window
 - smooth scrolling through all pages, page thumbnails and bookmarks (document outline)
@@ -80,9 +88,16 @@ switched on the start page.
 - **printing** (Ctrl+P) – all pages, the current one or a range; landscape pages stay landscape
 - **export pages to JPG / PNG / WebP** (Ctrl+E) – DPI, quality, page range and web friendly file names
 - **organizing pages** ("Organize pages"): rotate, delete, reorder by dragging, insert pages
-  from another PDF (also by dropping a file right between the pages), undo/redo (Ctrl+Z / Ctrl+Y)
-- **merging several PDFs into one** (on the start page or with "Insert PDF"); the bookmarks of every
-  merged file are kept, each file's under a bookmark named after it
+  from another PDF or images (also by dropping a file right between the pages), undo/redo (Ctrl+Z / Ctrl+Y)
+- **merging several PDFs into one** (on the start page or with "Insert file"), images included; the
+  bookmarks of every merged file are kept, each file's under a bookmark named after it
+- **reducing file size** (the button next to the lock): a smaller copy of the document – images
+  drawn at a higher resolution than needed are scaled down to 100, 150 or 300 ppi and stored as
+  JPEG (or kept as they are), unused and duplicate objects, private data of other programs and
+  embedded thumbnails are removed, fonts keep only the characters used and everything is
+  compressed. The dialog shows the size before and after, then saves the copy or opens it in a new
+  tab; the document itself stays as it is. A secured document stays secured with the same
+  passwords, and it needs the permission to make changes
 - **cropping pages** ("Edit" → Crop pages): drag a box around what should stay, fine-tune the margins
   in millimeters and apply it to this page, all pages or a range; only the visible area changes,
   the content outside stays in the file
@@ -139,7 +154,8 @@ electron/        main process of the desktop app (window, dialogs, writing files
   preload.cjs    a narrow bridge between the window and the system (the window has no Node.js access)
 src/
   engine/        PDF engine: MuPDF (WebAssembly) in a Web Worker + render queue;
-                 textedit.ts corrects lines of text, stamp.ts writes watermarks and page numbers
+                 textedit.ts corrects lines of text, stamp.ts writes watermarks and page numbers,
+                 images.ts makes PDFs of images, compress.ts makes PDFs smaller
   viewer/        virtualized page view, zoom, rotated view, pages side by side, full screen
   annotate/      comments, form fields, links, signatures, line editing and redaction over the pages
   components/    toolbar, tabs, sidebar, dialogs (password protection among them)
@@ -147,11 +163,13 @@ src/
   print/         printing
   organize/      organizing pages, merging and splitting PDFs
   pagetools/     cropping pages, watermark and page numbers dialogs
+  compress/      the "Reduce file size" dialog
   i18n/          translations (en.tsx is the source, other languages follow its shape)
   App.tsx        tabs, opening and saving documents
   DocView.tsx    one open document: toolbar, sidebar, viewer
   platform.ts    desktop vs. web differences (dialogs, saving files)
   recent.ts      recent files and the page each was left on
+build/           icons; installer.nsh adds Scamcrobat to "Open with" for images
 scripts/         dev server, icons, test and demo PDFs
 ```
 
@@ -218,6 +236,27 @@ P value (since revision 3 with separate bits for filling in forms and assembling
 way Acrobat and qpdf read them) and lifted once the permissions password is entered; the engine
 itself refuses edits they do not allow, so no part of the UI can get around them.
 
+A PDF from images is written by MuPDF's document writer: each image (each page of a TIFF) is
+drawn on a page of its own, JPEG data is embedded as it is and other formats losslessly, with
+transparency as a soft mask; EXIF orientation is applied. Formats MuPDF does not read (WebP) are
+decoded by the browser. A scan – an image that says 150 ppi or more – that fits on A3 keeps its
+own size; anything else (photos and screenshots say 72 or 96 ppi and would make pages a meter wide)
+goes on an A4 or Letter page turned like the image, within 10 mm margins, never enlarged.
+
+Reducing the file size works on a separate copy of the document. Every page is run through a
+device that records the resolution each image is drawn at (the smallest, when it is used more
+than once); images drawn above 1.5 times the chosen resolution are scaled down with MuPDF's
+filtered rendering, and images are stored as JPEG (gray, RGB or CMYK as before) when that saves
+enough – a JPEG is recompressed only when it gets at least a quarter smaller. Bilevel scans,
+stencil masks and images with color-key masks are left alone; soft masks are scaled with their
+images. Then the copy drops private data of the application that made it (PieceInfo) and embedded
+thumbnails, subsets its fonts (unless it has form fields, which need every glyph for typing) and
+is written with garbage collection that also merges duplicate streams, cleaned content streams,
+compressed fonts and images and compressed object streams. It is written twice – once as it is,
+then the freshly opened result optimized – because MuPDF 1.28 can lose the data of a stream when a
+changed document is renumbered while a stream's dictionary is held. Unsaved changes are written
+first, the same way saving does.
+
 Printing renders the chosen pages to images (150 or 300 DPI) and hands them to the system print
 dialog, one image per sheet, each sheet sized like its PDF page – the same approach the PDF
 viewers built into browsers use.
@@ -254,13 +293,12 @@ Done: **0.1** viewer and export to images · **0.2** organizing pages, merging, 
 **0.5** redaction, correcting text line by line, password protection and permissions ·
 **0.5.1** respecting the restrictions of secured documents · **0.6** rotating the view, two pages
 side by side, full screen, bookmarks kept when merging, cropping pages, watermarks, page numbers ·
-**0.6.1** search finds every word on pages already shown
+**0.6.1** search finds every word on pages already shown · **0.7** PDFs from images, reducing file size
 
 **Later**, roughly in this order:
 
 | Feature | Effort |
 |---|---|
-| Images → PDF, PDF compression | medium |
 | Comparing two versions of a document | medium |
 | OCR of scanned documents | larger |
 | Verifying electronic signatures, signing with a certificate | larger |

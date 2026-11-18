@@ -17,6 +17,7 @@ import {
   Save,
   SaveAll,
   Search,
+  Shrink,
   Signature,
   X,
   ZoomIn,
@@ -57,6 +58,8 @@ interface Props {
   onSign?(): void;
   /** Password protection dialog */
   onProtect?(): void;
+  /** "Reduce file size" dialog */
+  onCompress?(): void;
   onToggleSidebar(): void;
   onGoToPage(index: number): void;
   /** To the next / previous page (or pair of pages side by side) */
@@ -79,7 +82,7 @@ interface Props {
   blocked?: Partial<Record<BlockableAction, string>>;
 }
 
-export type BlockableAction = "print" | "export" | "annotate" | "edit" | "sign" | "organize";
+export type BlockableAction = "print" | "export" | "annotate" | "edit" | "sign" | "organize" | "compress";
 
 export function Toolbar(props: Props) {
   const { hasDoc, pageCount, currentPage, scale } = props;
@@ -122,6 +125,14 @@ export function Toolbar(props: Props) {
           title={hasDoc && !props.canAnnotate ? t.toolbar.organizePdfOnly : t.toolbar.protect}
         >
           <LockKeyhole size={18} />
+        </button>
+        <button
+          className="tb-btn"
+          onClick={props.onCompress}
+          disabled={!props.canAnnotate || !!blocked.compress}
+          title={hasDoc && !props.canAnnotate ? t.toolbar.organizePdfOnly : (blocked.compress ?? t.toolbar.compress)}
+        >
+          <Shrink size={18} />
         </button>
         <div className="tb-sep" />
         <button

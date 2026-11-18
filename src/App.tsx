@@ -20,8 +20,10 @@ import {
   type TabsState,
 } from "./tabs";
 import {
+  defaultPaper,
   dirname,
   fileFromDrop,
+  isImageName,
   isPdfName,
   onSaveAndClose,
   openFilePath,
@@ -51,6 +53,10 @@ interface OrganizeSession {
 
 const SIDEBAR_KEY = "scamcrobat.sidebar";
 const stem = (name: string) => name.replace(/\.pdf$/i, "");
+/** A file name without its extension ("photo.jpg" → "photo") */
+const bareName = (name: string) => name.replace(/\.[^.]+$/, "") || name;
+/** File names in the order Explorer shows them ("scan 2" before "scan 10") */
+const byName = (a: OpenedFile, b: OpenedFile) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" });
 
 function readSidebarPref() {
   try {
@@ -149,14 +155,47 @@ export function App() {
     [engine, askPassword],
   );
 
-  /** Opens files, each in its own tab (an already open file just gets activated). */
+  /**
+   * Makes one PDF of images (a page each, in the order of their names) and opens it in a
+   * new tab – a new document, not saved yet, named after the image (or "Images").
+   */
+  const openImages = useCallback(
+    async (images: OpenedFile[]) => {
+      const sorted = [...images].sort(byName);
+      setBusy(t.app.creatingPdf);
+      try {
+        const info = await engine.imagesToPdf(
+          sorted.map((f) => ({ name: f.name, data: f.data.slice(0) })),
+          defaultPaper(),
+        );
+        const firstPath = sorted.find((f) => f.path)?.path;
+        const doc: OpenDoc = {
+          info,
+          security: await engine.security(info.docId),
+          name: `${sorted.length === 1 ? bareName(sorted[0].name) : t.app.imagesName}.pdf`,
+          dir: firstPath ? dirname(firstPath) : undefined,
+          dirty: true,
+        };
+        commit((s) => placeDoc(s, doc)[0]);
+      } catch (e) {
+        setError(errorText(e));
+      } finally {
+        setBusy(null);
+      }
+    },
+    [engine, commit, t],
+  );
+
+  /** Opens files, each in its own tab (an already open file just gets activated); images make one new PDF. */
   const openFiles = useCallback(
     async (files: OpenedFile[]) => {
       if (!files.length) return;
       setLoading(true);
       setError(null);
       try {
-        for (const file of files) {
+        const images = files.filter((f) => isImageName(f.name));
+        if (images.length) await openImages(images);
+        for (const file of files.filter((f) => !isImageName(f.name))) {
           const existing = file.path && tabsRef.current.tabs.find((x) => samePath(x.doc?.path, file.path));
           if (existing) {
             activate(existing.id);
@@ -184,7 +223,7 @@ export function App() {
         setLoading(false);
       }
     },
-    [engine, openInEngine, activate, commit, t],
+    [engine, openInEngine, openImages, activate, commit, t],
   );
   const openFilesRef = useRef(openFiles);
   openFilesRef.current = openFiles;
@@ -213,6 +252,35 @@ export function App() {
       setError(errorText(e));
     }
   }, [openFiles]);
+
+  const imagesDialog = useCallback(async () => {
+    try {
+      const files = await openFilesDialog(t.app.imagesDialogTitle);
+      await openFiles(files);
+    } catch (e) {
+      setError(errorText(e));
+    }
+  }, [openFiles, t]);
+
+  /** Opens a copy of a document (the smaller one) in a new tab, with the same passwords. */
+  const openCopy = useCallback(
+    async (data: Uint8Array, name: string, of: OpenDoc) => {
+      try {
+        const info = await engine.open(data.slice().buffer, name, undefined, of.info.docId);
+        const doc: OpenDoc = {
+          info,
+          security: await engine.security(info.docId),
+          name,
+          dir: of.dir,
+          dirty: true,
+        };
+        commit((s) => placeDoc(s, doc)[0]);
+      } catch (e) {
+        setError(t.app.openCopyFailed(errorText(e)));
+      }
+    },
+    [engine, commit, t],
+  );
 
   // Desktop: files from Explorer (at startup and while running).
   useEffect(() => watchIncomingFiles((files) => void openFilesRef.current(files)), []);
@@ -358,14 +426,19 @@ export function App() {
     [engine, askPassword],
   );
 
-  /** Opens files as page sources for the organizer. Reports errors and skips failed files. */
+  /** Opens files as page sources for the organizer (an image as a page of its own). Reports errors and skips failed files. */
   const openSources = useCallback(
     async (files: OpenedFile[]) => {
-      const opened: { info: DocInfo; file: OpenedFile }[] = [];
+      const opened: { info: DocInfo; file: OpenedFile; image?: boolean }[] = [];
       const failed: string[] = [];
       for (const file of files) {
         let info: DocInfo | null = null;
         try {
+          if (isImageName(file.name)) {
+            info = await engine.imagesToPdf([{ name: file.name, data: file.data.slice(0) }], defaultPaper());
+            opened.push({ info, file, image: true });
+            continue;
+          }
           info = await openInEngine(file);
           if (!info) continue;
           if (!info.isPdf) {
@@ -420,17 +493,18 @@ export function App() {
       setOrganize({
         id: Date.now(),
         tabId: null,
-        sources: opened.map(({ info, file }) => ({
+        sources: opened.map(({ info, file, image }) => ({
           docId: info.docId,
           name: file.name,
           path: file.path,
           owned: true,
           hasOutline: info.outline.length > 0,
+          image,
         })),
         pages: opened.flatMap((o) => pagesFromDoc(o.info)),
         isNew: true,
         title: t.app.mergeTitle,
-        baseName: opened.length === 1 ? stem(opened[0].file.name) : t.app.mergedName,
+        baseName: opened.length === 1 ? bareName(opened[0].file.name) : t.app.mergedName,
         baseDir: firstPath ? dirname(firstPath) : undefined,
       });
     } catch (e) {
@@ -582,9 +656,10 @@ export function App() {
         organizerRef.current?.insertFiles(await Promise.all(files.map(fileFromDrop)));
         return;
       }
-      const pdfs = files.filter((f) => isPdfName(f.name) || f.type === "application/pdf");
-      // Other formats MuPDF can show (XPS, EPUB, images) open one at a time.
-      const chosen = pdfs.length ? pdfs : files.slice(0, 1);
+      // PDFs open in tabs, images make one new PDF; other formats MuPDF can show
+      // (XPS, EPUB) open one at a time.
+      const openable = files.filter((f) => isPdfName(f.name) || f.type === "application/pdf" || isImageName(f.name));
+      const chosen = openable.length ? openable : files.slice(0, 1);
       await openFilesRef.current(await Promise.all(chosen.map(fileFromDrop)));
     };
     window.addEventListener("dragenter", onEnter);
@@ -695,6 +770,7 @@ export function App() {
               onSecurity={(security) => updateSecurity(tab.id, tab.doc!.info.docId, security)}
               onPages={(pages) => updatePages(tab.id, tab.doc!.info.docId, pages)}
               onPresenting={setPresenting}
+              onOpenCopy={(data, name) => void openCopy(data, name, tab.doc!)}
               onToast={setToast}
               onError={setError}
             />
@@ -706,6 +782,7 @@ export function App() {
               sidebarOpen={sidebarOpen}
               onOpen={openDialogCb}
               onMerge={() => void startMerge()}
+              onImages={() => void imagesDialog()}
               onOpenRecent={(path, name) => void openRecent(path, name)}
             />
           ),

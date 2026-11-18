@@ -1,5 +1,5 @@
 /** The start page shown in an empty tab: open, merge, recent files, language. */
-import { Combine, FileText, FolderOpen, Globe, X } from "lucide-react";
+import { Combine, FileText, FolderOpen, Globe, Images, X } from "lucide-react";
 import { Toolbar } from "./components/Toolbar";
 import { CSS_PX_PER_PT_AT_100 } from "./viewer/layout";
 import { dirname, isDesktop } from "./platform";
@@ -12,6 +12,8 @@ interface Props {
   sidebarOpen: boolean;
   onOpen(): void;
   onMerge(): void;
+  /** Create a PDF from images */
+  onImages(): void;
   onOpenRecent(path: string, name: string): void;
 }
 
@@ -21,7 +23,7 @@ const RECENT_SHOWN = 6;
 const noop = () => {};
 const NO_SEARCH_INFO = { query: "", count: 0, active: 0, done: false, busy: false };
 
-export function StartView({ active, loading, sidebarOpen, onOpen, onMerge, onOpenRecent }: Props) {
+export function StartView({ active, loading, sidebarOpen, onOpen, onMerge, onImages, onOpenRecent }: Props) {
   const t = useT();
   const lang = useLang();
   const recent = useRecent().slice(0, RECENT_SHOWN);
@@ -62,9 +64,14 @@ export function StartView({ active, loading, sidebarOpen, onOpen, onMerge, onOpe
               <FolderOpen size={18} /> {loading ? t.app.opening : t.app.openPdf}
             </button>
             <p className="muted small">{t.app.orDrop}</p>
-            <button className="btn empty-secondary" onClick={onMerge} disabled={loading}>
-              <Combine size={16} /> {t.app.merge}
-            </button>
+            <div className="empty-secondary-row">
+              <button className="btn empty-secondary" onClick={onMerge} disabled={loading}>
+                <Combine size={16} /> {t.app.merge}
+              </button>
+              <button className="btn empty-secondary" onClick={onImages} disabled={loading}>
+                <Images size={16} /> {t.app.fromImages}
+              </button>
+            </div>
             {!isDesktop && <p className="muted small">{t.app.localOnly}</p>}
             {isDesktop && recent.length > 0 && (
               <nav className="recent" aria-label={t.app.recent}>

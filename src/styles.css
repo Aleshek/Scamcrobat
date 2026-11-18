@@ -1565,6 +1565,95 @@ input {
   margin: 14px 0 0;
 }
 
+.empty-secondary-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.empty-card .empty-secondary-row .btn.empty-secondary {
+  margin: 0;
+}
+
+/* ---------- Reduce file size ---------- */
+
+.compress-intro {
+  margin: 0 0 14px;
+}
+
+.compress-option {
+  align-items: flex-start;
+  padding: 5px 0;
+}
+
+.compress-option input {
+  margin-top: 3px;
+}
+
+.compress-option .hint {
+  display: block;
+  margin: 1px 0 0;
+}
+
+.compress-result {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.compress-result p {
+  margin: 2px 0 6px;
+}
+
+.compress-sizes {
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
+}
+
+.compress-percent {
+  margin-left: 10px;
+  padding: 1px 8px;
+  border-radius: 10px;
+  background: var(--accent-soft);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.warn-icon {
+  color: var(--danger);
+  flex: none;
+}
+
+.alert.warn {
+  margin: 12px 0 0;
+}
+
+.progress-bar.indeterminate {
+  width: 35%;
+  animation: progress-slide 1.2s ease-in-out infinite;
+}
+
+@keyframes progress-slide {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(290%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .progress-bar.indeterminate {
+    width: 100%;
+    animation: none;
+    opacity: 0.5;
+  }
+}
+
 .choice-message p {
   margin: 4px 0 8px;
 }

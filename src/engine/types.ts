@@ -254,9 +254,51 @@ export interface EditState {
   pages?: PageInfo[];
 }
 
+/** Paper for images too large to keep their own size as a page. */
+export type Paper = "a4" | "letter";
+
+/** An image file to make a PDF page (or pages, for a multi-page TIFF) from. */
+export interface ImageFile {
+  data: ArrayBuffer;
+  name: string;
+}
+
+/**
+ * How much "Reduce file size" may change images: scaled down for the screen (100 ppi),
+ * for e-books (150 ppi) or for print (300 ppi), or left as they are ("lossless").
+ */
+export type CompressPreset = "small" | "balanced" | "high" | "lossless";
+
+export interface CompressResult {
+  /** The smaller copy */
+  data: Uint8Array;
+  /** Size in bytes of the document as it is (with its changes) and of the copy */
+  before: number;
+  after: number;
+  /** Images drawn on the pages, and how many of them got smaller */
+  images: number;
+  changed: number;
+  /** The document is digitally signed (the signatures are not valid in the copy) */
+  signed: boolean;
+  /** The document had changes and was written again first (its undo history is gone) */
+  reopened: boolean;
+}
+
+/** Progress of a long request (sent before its result). */
+export interface Progress {
+  stage: "images" | "writing";
+  done: number;
+  total: number;
+}
+
 /** Requests the UI sends to the worker: name → [arguments, result] */
 export interface EngineApi {
-  open: [{ data: ArrayBuffer; name: string; password?: string }, DocInfo];
+  /** Opens a document; `sameAs` = open it with the passwords of that open document. */
+  open: [{ data: ArrayBuffer; name: string; password?: string; sameAs?: number }, DocInfo];
+  /** Makes one PDF of images (a page for each) and opens it as a new document. */
+  imagesToPdf: [{ images: ImageFile[]; paper: Paper }, DocInfo];
+  /** A smaller copy of a document; the document itself stays as it is. */
+  compress: [{ docId: number; preset: CompressPreset }, CompressResult];
   close: [{ docId: number }, void];
   render: [{ docId: number; page: number; scale: number }, RenderResult];
   exportPage: [
@@ -312,7 +354,8 @@ export interface EngineRequest<M extends EngineMethod = EngineMethod> {
 
 export type EngineResponse =
   | { id: number; ok: true; result: unknown }
-  | { id: number; ok: false; error: { message: string; code?: string; detail?: string } };
+  | { id: number; ok: false; error: { message: string; code?: string; detail?: string } }
+  | { id: number; ok?: undefined; progress: Progress };
 
 /**
  * Error from the engine; `code` (e.g. PASSWORD_REQUIRED) is translated by the UI,

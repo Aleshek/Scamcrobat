@@ -5,14 +5,18 @@
 import {
   EngineError,
   type AnnotEdit,
+  type CompressPreset,
   type EngineApi,
   type EngineMethod,
   type EngineResponse,
+  type ImageFile,
   type ImageFormat,
   type Margins,
   type OutlineFile,
   type PageRef,
+  type Paper,
   type Point,
+  type Progress,
   type Protection,
   type RedactArea,
   type Rect,
@@ -23,6 +27,7 @@ import {
 interface Pending {
   resolve: (value: unknown) => void;
   reject: (reason: unknown) => void;
+  onProgress?: (p: Progress) => void;
 }
 
 interface QueuedRender {
@@ -74,6 +79,10 @@ export class PdfEngine {
       }
       const p = this.pending.get(msg.id);
       if (!p) return;
+      if (!("ok" in msg) || msg.ok === undefined) {
+        p.onProgress?.(msg.progress);
+        return;
+      }
       this.pending.delete(msg.id);
       if (msg.ok) p.resolve(msg.result);
       else p.reject(new EngineError(msg.error.message, msg.error.code, msg.error.detail));
@@ -90,17 +99,33 @@ export class PdfEngine {
     method: M,
     args: EngineApi[M][0],
     transfer: Transferable[] = [],
+    onProgress?: (p: Progress) => void,
   ): Promise<EngineApi[M][1]> {
     await this.ready;
     const id = this.seq++;
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve: resolve as (v: unknown) => void, reject });
+      this.pending.set(id, { resolve: resolve as (v: unknown) => void, reject, onProgress });
       this.worker.postMessage({ id, method, args }, transfer);
     });
   }
 
-  open(data: ArrayBuffer, name: string, password?: string) {
-    return this.call("open", { data, name, password }, [data]);
+  /** Opens a document; `sameAs` = with the passwords of that open document (a copy of it). */
+  open(data: ArrayBuffer, name: string, password?: string, sameAs?: number) {
+    return this.call("open", { data, name, password, sameAs }, [data]);
+  }
+
+  /** Makes one PDF of images (a page for each) and opens it as a new document. */
+  imagesToPdf(images: ImageFile[], paper: Paper) {
+    return this.call(
+      "imagesToPdf",
+      { images, paper },
+      images.map((i) => i.data),
+    );
+  }
+
+  /** A smaller copy of a document (unsaved changes included). */
+  compress(docId: number, preset: CompressPreset, onProgress?: (p: Progress) => void) {
+    return this.call("compress", { docId, preset }, [], onProgress);
   }
 
   close(docId: number) {

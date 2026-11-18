@@ -34,6 +34,7 @@ import {
   type ToolSettings,
 } from "./annotate/tools";
 import { ProtectDialog } from "./components/ProtectDialog";
+import { CompressDialog } from "./compress/CompressDialog";
 import { Toolbar, type BlockableAction } from "./components/Toolbar";
 import { Sidebar } from "./components/Sidebar";
 import { ExportDialog } from "./export/ExportDialog";
@@ -90,6 +91,8 @@ interface Props {
   onPages(pages: PageInfo[]): void;
   /** Full screen started / ended (the window hides everything else). */
   onPresenting(on: boolean): void;
+  /** Opens a copy of the document (e.g. the smaller one) in a new tab. */
+  onOpenCopy(data: Uint8Array, name: string): void;
   onToast(message: string): void;
   onError(message: string): void;
 }
@@ -117,7 +120,7 @@ export function DocView(props: Props) {
   const [search, setSearch] = useState<SearchState>(NO_SEARCH);
   const [selection, setSelection] = useState<TextSelection | null>(null);
   const [dialog, setDialog] = useState<
-    "export" | "print" | "protect" | "unlock" | "crop" | "watermark" | "pageNumbers" | null
+    "export" | "print" | "protect" | "unlock" | "crop" | "watermark" | "pageNumbers" | "compress" | null
   >(null);
   /** Rotation of the view (clockwise); the file stays as it is */
   const [rotation, setRotation] = useState(0);
@@ -737,7 +740,7 @@ export function DocView(props: Props) {
     if (!rights.print) list.print = why(r.printBlocked);
     if (!rights.copy) list.export = why(r.copyBlocked);
     if (!rights.annotate) list.annotate = list.sign = why(r.annotateBlocked);
-    if (!rights.modify) list.edit = why(r.modifyBlocked);
+    if (!rights.modify) list.edit = list.compress = why(r.modifyBlocked);
     if (!rights.assemble) list.organize = why(r.assembleBlocked);
     return list;
   }, [rights, t]);
@@ -787,6 +790,7 @@ export function DocView(props: Props) {
         onEdit={() => toggleBar("edit")}
         onSign={() => chooseTool("signature")}
         onProtect={() => setDialog("protect")}
+        onCompress={() => setDialog("compress")}
         onToggleSidebar={onToggleSidebar}
         onGoToPage={goToPage}
         onStepPage={stepPage}
@@ -936,6 +940,29 @@ export function DocView(props: Props) {
         />
       )}
       {active && sigDialog && <SignatureDialog onClose={() => setSigDialog(null)} onUse={onSignatureChosen} />}
+      {active && dialog === "compress" && canModify && (
+        <CompressDialog
+          engine={engine}
+          docId={info.docId}
+          fileName={doc.name}
+          defaultDir={doc.dir}
+          dirty={history.canUndo || doc.security.pending !== undefined}
+          onReopened={() => {
+            // The engine wrote the changes and reopened the document: a new edit history,
+            // and a pending protection is applied now.
+            setSelected(null);
+            bumpAll();
+            engine.history(info.docId).then(setHistory, () => {});
+            engine.security(info.docId).then(props.onSecurity, () => {});
+          }}
+          onOpenCopy={(data, name) => {
+            closeDialog();
+            props.onOpenCopy(data, name);
+          }}
+          onSaved={(name) => onToast(t.app.saved(name))}
+          onClose={closeDialog}
+        />
+      )}
       {active && (dialog === "protect" || dialog === "unlock") && (
         <ProtectDialog
           engine={engine}

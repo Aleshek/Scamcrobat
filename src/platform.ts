@@ -2,6 +2,7 @@
  * Differences between the desktop (Electron) and the web version.
  * The desktop app provides `window.scamcrobat` from electron/preload.cjs.
  */
+import type { Paper } from "./engine/types";
 import { msg } from "./i18n";
 
 export interface OpenedFile {
@@ -73,13 +74,13 @@ export function watchIncomingFiles(onFiles: (files: OpenedFile[]) => void): () =
   return unsubscribe;
 }
 
-/** Lets the user pick one or more PDF files. */
+/** Lets the user pick one or more PDF files or images. */
 export async function openFilesDialog(title?: string): Promise<OpenedFile[]> {
   if (bridge) return (await bridge.openFilesDialog(title)).map(fromBridge);
   return new Promise((resolve) => {
     const input = document.createElement("input");
     input.type = "file";
-    input.accept = "application/pdf,.pdf";
+    input.accept = ["application/pdf", ".pdf", ...IMAGE_EXTENSIONS.map((e) => `.${e}`)].join(",");
     input.multiple = true;
     input.onchange = async () => resolve(await Promise.all([...(input.files ?? [])].map(fileFromDrop)));
     input.oncancel = () => resolve([]);
@@ -110,6 +111,17 @@ export async function fileFromDrop(file: File): Promise<OpenedFile> {
 }
 
 export const isPdfName = (name: string) => /\.pdf$/i.test(name);
+
+/** Images that open as a new PDF (the same list as in electron/main.js). */
+export const IMAGE_EXTENSIONS = ["jpg", "jpeg", "jpe", "jfif", "png", "gif", "bmp", "tif", "tiff", "webp"];
+const IMAGE_PATTERN = new RegExp(`[.](${IMAGE_EXTENSIONS.join("|")})$`, "i");
+export const isImageName = (name: string) => IMAGE_PATTERN.test(name);
+
+/** Paper for images: Letter where it is used (by the first preferred language), A4 elsewhere. */
+export function defaultPaper(): Paper {
+  const first = navigator.languages[0] ?? navigator.language ?? "";
+  return /-(US|CA|MX|PH)\b/i.test(first) ? "letter" : "a4";
+}
 
 /** Overwrites an existing file (desktop only, only a file the user opened or saved). */
 export async function savePdf(path: string, data: Uint8Array): Promise<void> {

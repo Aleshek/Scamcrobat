@@ -12,6 +12,8 @@ export interface OrgSource {
   owned: boolean;
   /** The document has bookmarks */
   hasOutline: boolean;
+  /** A PDF made of an inserted image (it gets no bookmark of its own) */
+  image?: boolean;
 }
 
 export interface OrgPage {
@@ -29,9 +31,11 @@ export interface OrgPage {
 /**
  * Files whose bookmarks the composed PDF keeps under a bookmark named after the file:
  * when merging, all files used; when inserting into a document, the inserted files that have bookmarks.
+ * Images get no bookmark.
  */
 export function outlineFiles(sources: OrgSource[], pages: OrgPage[], isNew: boolean): OutlineFile[] {
-  const used = new Set(pages.map((p) => p.docId));
+  const images = new Set(sources.filter((s) => s.image).map((s) => s.docId));
+  const used = new Set(pages.map((p) => p.docId).filter((id) => !images.has(id)));
   const named = isNew
     ? used.size > 1
       ? sources.filter((s) => used.has(s.docId))

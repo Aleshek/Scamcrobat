@@ -6,6 +6,8 @@
  */
 import * as mupdf from "mupdf";
 import { CodedError } from "./coded";
+import { compressPdf } from "./compress";
+import { imagesToPdf } from "./images";
 import { stampPages } from "./stamp";
 import { readTextLines, replaceTextLine } from "./textedit";
 import type {
@@ -30,6 +32,7 @@ import type {
   PageRef,
   Permissions,
   Point,
+  Progress,
   Protection,
   Quad,
   RedactArea,
@@ -945,15 +948,38 @@ function cropPage(page: mupdf.PDFPage, m: Margins) {
   obj.put("CropBox", r.map((v) => Math.round(v * 100) / 100));
 }
 
+/** A request's handler; `progress` reports how far a long one got. */
 type Handler<M extends EngineMethod> = (
   args: EngineApi[M][0],
+  progress: (p: Progress) => void,
 ) => Promise<[EngineApi[M][1], Transferable[]?]> | [EngineApi[M][1], Transferable[]?];
 
 const handlers: { [M in EngineMethod]: Handler<M> } = {
-  open({ data, name, password }) {
+  open({ data, name, password, sameAs }) {
     const bytes = new Uint8Array(data);
-    const doc = openBytes(bytes, name, password);
-    return [registerDoc(doc, bytes, password)];
+    // (a copy of an open document: encrypted with the same passwords)
+    const like = sameAs !== undefined ? docs.get(sameAs) : undefined;
+    const doc = openBytes(bytes, name, like?.password ?? password);
+    return [registerDoc(doc, bytes, like?.password ?? password, like?.ownerPassword)];
+  },
+
+  async imagesToPdf({ images, paper }) {
+    const bytes = await imagesToPdf(images, paper);
+    return [registerDoc(openBytes(bytes, "application/pdf"), bytes)];
+  },
+
+  compress({ docId, preset }, progress) {
+    getPdf(docId);
+    // A smaller copy changes images and fonts – it is a change of the document.
+    requireRight(docId, "modify");
+    // Unsaved changes are written first (like saving does, which resets the undo history).
+    const reopened = getEntry(docId).edited;
+    const bytes = snapshot(docId);
+    const result = compressPdf(bytes, getEntry(docId).password, preset, progress);
+    return [
+      { ...result, before: bytes.length, after: result.data.length, reopened },
+      [result.data.buffer],
+    ];
   },
 
   close({ docId }) {
@@ -1176,7 +1202,8 @@ scope.onmessage = async (e) => {
   const { id, method, args } = e.data;
   try {
     const handler = handlers[method] as Handler<EngineMethod>;
-    const [result, transfer] = await handler(args as never);
+    const progress = (p: Progress) => scope.postMessage({ id, progress: p });
+    const [result, transfer] = await handler(args as never, progress);
     scope.postMessage({ id, ok: true, result }, transfer ?? []);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

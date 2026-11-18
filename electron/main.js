@@ -20,7 +20,9 @@ protocol.registerSchemesAsPrivileged([
 const STRINGS = {
   en: {
     openTitle: "Open PDF",
+    pdfAndImages: "PDF documents and images",
     pdfFiles: "PDF documents",
+    imageFiles: "Images",
     allFiles: "All files",
     saveTitle: "Save PDF",
     pdfDocument: "PDF document",
@@ -41,7 +43,9 @@ const STRINGS = {
   },
   cs: {
     openTitle: "Otevřít PDF",
+    pdfAndImages: "PDF dokumenty a obrázky",
     pdfFiles: "PDF dokumenty",
+    imageFiles: "Obrázky",
     allFiles: "Všechny soubory",
     saveTitle: "Uložit PDF",
     pdfDocument: "PDF dokument",
@@ -84,19 +88,25 @@ const approvedFolders = new Set();
 const approvedFiles = new Set();
 const fileKey = (p) => path.resolve(p).toLowerCase();
 
-function pdfsFromArgv(argv) {
-  // argv[0] is the executable; in development the app path follows.
-  return argv.slice(1).filter((a) => !a.startsWith("-") && /\.pdf$/i.test(a) && existsSync(a));
-}
-
-async function readPdf(filePath) {
-  const resolved = path.resolve(filePath);
-  const data = await fs.readFile(resolved);
-  approvedFiles.add(fileKey(resolved));
-  return { name: path.basename(resolved), path: resolved, data: new Uint8Array(data) };
-}
+/** Images the app makes PDFs of (the same list as in src/platform.ts). */
+const IMAGE_EXTENSIONS = ["jpg", "jpeg", "jpe", "jfif", "png", "gif", "bmp", "tif", "tiff", "webp"];
+const IMAGE_PATTERN = new RegExp(`[.](${IMAGE_EXTENSIONS.join("|")})$`, "i");
 
 const isPdfPath = (p) => typeof p === "string" && /\.pdf$/i.test(p);
+const isImagePath = (p) => typeof p === "string" && IMAGE_PATTERN.test(p);
+
+function filesFromArgv(argv) {
+  // argv[0] is the executable; in development the app path follows.
+  return argv.slice(1).filter((a) => !a.startsWith("-") && (isPdfPath(a) || isImagePath(a)) && existsSync(a));
+}
+
+async function readFile(filePath) {
+  const resolved = path.resolve(filePath);
+  const data = await fs.readFile(resolved);
+  // An image becomes a new PDF – only PDFs are ever written back.
+  if (isPdfPath(resolved)) approvedFiles.add(fileKey(resolved));
+  return { name: path.basename(resolved), path: resolved, data: new Uint8Array(data) };
+}
 
 /** Writes through a temporary file – on failure (full disk, file locked) the original stays intact. */
 async function writeFileSafely(target, data) {
@@ -118,11 +128,16 @@ async function writeFileSafely(target, data) {
 
 let mainWindow = null;
 
+let pendingTimer = null;
+
 function queueFiles(paths) {
   if (!paths.length) return;
   pendingPaths.push(...paths);
-  // The window takes the files when it is ready (file:take-pending).
-  mainWindow?.webContents.send("app:files-pending");
+  // The window takes the files when it is ready (file:take-pending). Explorer starts the app
+  // once for each of several selected files ("Open with" on images), so the window is told
+  // a moment later – images that come together make one PDF.
+  clearTimeout(pendingTimer);
+  pendingTimer = setTimeout(() => mainWindow?.webContents.send("app:files-pending"), 400);
 }
 
 function createWindow() {
@@ -234,7 +249,7 @@ if (!gotLock) {
       if (mainWindow.isMinimized()) mainWindow.restore();
       mainWindow.focus();
     }
-    queueFiles(pdfsFromArgv(argv));
+    queueFiles(filesFromArgv(argv));
   });
 
   app.whenReady().then(() => {
@@ -260,7 +275,7 @@ if (!gotLock) {
       const files = [];
       for (const p of paths) {
         try {
-          files.push(await readPdf(p));
+          files.push(await readFile(p));
         } catch (e) {
           console.error(`Cannot read ${p}:`, e);
         }
@@ -274,19 +289,22 @@ if (!gotLock) {
       const result = await dialog.showOpenDialog(win, {
         title: typeof options?.title === "string" ? options.title : s.openTitle,
         properties: ["openFile", "multiSelections"],
+        // Images become PDF pages (a new document, or pages inserted in the organizer).
         filters: [
+          { name: s.pdfAndImages, extensions: ["pdf", ...IMAGE_EXTENSIONS] },
           { name: s.pdfFiles, extensions: ["pdf"] },
+          { name: s.imageFiles, extensions: IMAGE_EXTENSIONS },
           { name: s.allFiles, extensions: ["*"] },
         ],
       });
       if (result.canceled) return [];
-      return Promise.all(result.filePaths.map(readPdf));
+      return Promise.all(result.filePaths.map(readFile));
     });
 
     // A file dropped into the window – the main process reads it so that it can be saved later.
     ipcMain.handle("file:open-path", async (_e, filePath) => {
       if (!isPdfPath(filePath) || !existsSync(filePath)) return null;
-      return readPdf(filePath);
+      return readFile(filePath);
     });
 
     ipcMain.handle("file:save", async (_e, filePath, data) => {
@@ -365,7 +383,7 @@ if (!gotLock) {
       });
     });
 
-    queueFiles(pdfsFromArgv(process.argv));
+    queueFiles(filesFromArgv(process.argv));
     createWindow();
 
     app.on("activate", () => {
