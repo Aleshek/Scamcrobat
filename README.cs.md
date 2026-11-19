@@ -20,6 +20,11 @@ i jako webová stránka; obě verze sdílí stejný kód.
 </picture>
 
 <picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/cs/annotate-dark.png">
+  <img alt="Komentáře – zvýraznění, podtržení, přeškrtnuté slovo, poznámka, kresba, textová pole a podpis" src="docs/cs/annotate-light.png">
+</picture>
+
+<picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/cs/organizer-dark.png">
   <img alt="Uspořádání stránek – otáčení, mazání, přeskládání a slučování PDF" src="docs/cs/organizer-light.png">
 </picture>
@@ -34,14 +39,19 @@ Scamcrobat → Vždy. U obrázků (JPG, PNG, GIF, BMP, TIFF, WebP) se Scamcrobat
 „Otevřít v programu“ – udělá z nich PDF – a nikdy se nestane jejich výchozím programem.
 
 Instalátor zatím není digitálně podepsaný, proto Windows SmartScreen při prvním spuštění
-zobrazí varování („Další informace → Přesto spustit“).
+zobrazí varování („Další informace → Přesto spustit“). U každé verze je uvedený kontrolní součet
+SHA-256 instalátoru; pro stažený soubor ho v PowerShellu ukáže `Get-FileHash Scamcrobat-Setup-….exe`.
+
+Aplikace pro Windows se jednou denně zeptá GitHubu na číslo nejnovější verze a když vyjde novější,
+zobrazí malé upozornění. Nic o vás ani o vašich dokumentech se neodesílá a kontrolu jde vypnout
+na úvodní obrazovce. Co se v které verzi změnilo, je v [přehledu změn](CHANGELOG.md) (anglicky).
 
 **Web:** stejná aplikace běží i v prohlížeči na <https://aleshek.github.io/Scamcrobat/>.
 Soubory se nikam neodesílají – vše se zpracovává přímo ve vašem prohlížeči.
 
 Aplikace je **česky** i **anglicky**; řídí se jazykem systému a přepnout jde na úvodní obrazovce.
 
-## Co umí (verze 0.7)
+## Co umí (verze 0.8)
 
 - otevření PDF dvojklikem, z dialogu (Ctrl+O) nebo přetažením do okna
 - **PDF z obrázků**: obrázky JPG, PNG, GIF, BMP, TIFF (všechny jeho stránky) a WebP otevřené
@@ -117,11 +127,12 @@ Aplikace je **česky** i **anglicky**; řídí se jazykem systému a přepnout j
   odstraněného nezůstalo
 - otevírání dokumentů chráněných heslem
 - světlý i tmavý vzhled podle nastavení systému
+- upozornění na novou verzi (desktop)
 
 ## Vývoj
 
-Vývojová dokumentace (spuštění, sestavení, vydání nové verze, architektura, překlady
-a automatické testy) je v [anglickém README](README.md#development).
+Vývojová dokumentace (spuštění, testy, sestavení, vydání nové verze, architektura, překlady
+a snímky obrazovky) je v [anglickém README](README.md#development).
 
 ## Plán
 
@@ -131,7 +142,8 @@ nedávné soubory · **0.5** začernění, oprava textu po řádcích, ochrana h
 **0.5.1** dodržování omezení zabezpečených dokumentů · **0.6** otáčení zobrazení, dvě stránky
 vedle sebe, celá obrazovka, záložky při slučování, ořez stránek, vodoznak, číslování stránek ·
 **0.6.1** vyhledávání najde všechna slova i na už zobrazených stránkách · **0.7** PDF z obrázků,
-zmenšení velikosti souboru
+zmenšení velikosti souboru · **0.8** upozornění na novou verzi, automatické testy, poznámky k vydání
+a kontrolní součty (podrobnosti v [přehledu změn](CHANGELOG.md))
 
 **Později**, zhruba v tomto pořadí:
 
@@ -143,6 +155,11 @@ zmenšení velikosti souboru
 | Úprava celých odstavců s přeskládáním textu (jen pokud opravy po řádcích nebudou stačit) | velmi velká |
 
 **Neplánujeme:** převod Word → PDF (Word to umí sám), převod PDF → Word, cloudové úložiště a sdílení.
+
+## Připomínky
+
+Chyby a nápady můžete hlásit v [Issues](https://github.com/Aleshek/Scamcrobat/issues), česky
+i anglicky. Bezpečnostní problémy prosím hlaste neveřejně – viz [SECURITY.md](SECURITY.md).
 
 ## Licence
 

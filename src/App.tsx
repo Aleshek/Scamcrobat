@@ -3,6 +3,7 @@ import { FileUp, LoaderCircle } from "lucide-react";
 import { PdfEngine } from "./engine/engine";
 import { EngineError, type DocInfo, type PageInfo, type SecurityInfo } from "./engine/types";
 import { TabBar } from "./components/TabBar";
+import { UpdateNotice } from "./components/UpdateNotice";
 import { ChoiceDialog, type ChoiceRequest } from "./components/ChoiceDialog";
 import { PasswordDialog } from "./components/PasswordDialog";
 import { Organizer, type OrganizeResult, type OrganizerHandle } from "./organize/Organizer";
@@ -827,6 +828,7 @@ export function App() {
       )}
 
       {toast && <div className="toast">{toast}</div>}
+      {isDesktop && <UpdateNotice />}
 
       {passwordAsk && (
         <PasswordDialog

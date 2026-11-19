@@ -28,6 +28,7 @@ interface DesktopBridge {
   getPathForFile(file: File): string;
   setLanguage(lang: string): void;
   print(): Promise<void>;
+  checkForUpdate(): Promise<{ version: string; newer: boolean; url: string } | null>;
 }
 
 declare global {
@@ -86,6 +87,11 @@ export async function openFilesDialog(title?: string): Promise<OpenedFile[]> {
     input.oncancel = () => resolve([]);
     input.click();
   });
+}
+
+/** Desktop: the latest released version (null on the web, offline or when GitHub does not answer). */
+export async function checkForUpdate() {
+  return bridge ? bridge.checkForUpdate() : null;
 }
 
 /** Desktop: opens a file by its path (recent files); null when it no longer exists. */

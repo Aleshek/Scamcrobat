@@ -142,8 +142,8 @@ function queueFiles(paths) {
 
 function createWindow() {
   const win = new BrowserWindow({
-    width: 1280,
-    height: 900,
+    width: SMOKE_SIZE ? Number(SMOKE_SIZE[1]) : 1280,
+    height: SMOKE_SIZE ? Number(SMOKE_SIZE[2]) : 900,
     minWidth: 640,
     minHeight: 420,
     show: false,
@@ -211,10 +211,26 @@ function createWindow() {
 // Optional SCAMCROBAT_SMOKE_SCRIPT=file.js – a script run in the window before the screenshot.
 // SCAMCROBAT_SMOKE_THEME=light|dark forces the theme (README screenshots).
 // SCAMCROBAT_SMOKE_PRINT=file.pdf – printing saves a PDF there instead of opening the print dialog.
+// SCAMCROBAT_SMOKE_SIZE=1440x900 – the size of the window.
 const SMOKE_SHOT = process.env.SCAMCROBAT_SMOKE_SHOT || null;
 const SMOKE_SCRIPT = process.env.SCAMCROBAT_SMOKE_SCRIPT || null;
 const SMOKE_THEME = process.env.SCAMCROBAT_SMOKE_THEME;
 const SMOKE_PRINT = process.env.SCAMCROBAT_SMOKE_PRINT || null;
+const SMOKE_SIZE = /^(\d+)x(\d+)$/.exec(process.env.SCAMCROBAT_SMOKE_SIZE ?? "");
+
+const RELEASES_PAGE = "https://github.com/Aleshek/Scamcrobat/releases";
+const LATEST_RELEASE_API = "https://api.github.com/repos/Aleshek/Scamcrobat/releases/latest";
+
+/** "0.10.0" is newer than "0.9.2" (numbers, not text). */
+function isNewerVersion(latest, current) {
+  const parts = (v) => v.split("-")[0].split(".").map((n) => parseInt(n, 10) || 0);
+  const a = parts(latest);
+  const b = parts(current);
+  for (let i = 0; i < 3; i++) {
+    if ((a[i] ?? 0) !== (b[i] ?? 0)) return (a[i] ?? 0) > (b[i] ?? 0);
+  }
+  return false;
+}
 
 function attachSmokeTest(win) {
   win.webContents.on("console-message", (e) => console.log(`[renderer:${e.level}] ${e.message}`));
@@ -235,6 +251,13 @@ function attachSmokeTest(win) {
       app.quit();
     }, Number(process.env.SCAMCROBAT_SMOKE_DELAY || 4000));
   });
+}
+
+// Development and automated tests keep their own settings and recent files, apart from
+// the installed app (and do not hand their files over to it when it is running).
+// SCAMCROBAT_USER_DATA=folder starts with a clean profile there (README screenshots).
+if (!app.isPackaged) {
+  app.setPath("userData", process.env.SCAMCROBAT_USER_DATA || path.join(app.getPath("appData"), "Scamcrobat Dev"));
 }
 
 const gotLock = app.requestSingleInstanceLock();
@@ -365,6 +388,24 @@ if (!gotLock) {
       if (approvedFolders.has(path.dirname(resolved)) || approvedFiles.has(fileKey(resolved))) {
         shell.showItemInFolder(resolved);
       }
+    });
+
+    // New version check: only the number of the latest release on GitHub is asked for
+    // (the window decides whether and how often).
+    ipcMain.handle("app:check-update", async () => {
+      const response = await net.fetch(LATEST_RELEASE_API, {
+        headers: { Accept: "application/vnd.github+json", "User-Agent": `Scamcrobat/${app.getVersion()}` },
+      });
+      if (!response.ok) return null;
+      const release = await response.json();
+      const version = String(release.tag_name ?? "").replace(/^v/, "");
+      if (release.draft || release.prerelease || !/^\d+\.\d+\.\d+$/.test(version)) return null;
+      return {
+        version,
+        newer: isNewerVersion(version, app.getVersion()),
+        // built here rather than taken from the answer: only this page can be opened from it
+        url: `${RELEASES_PAGE}/tag/v${version}`,
+      };
     });
 
     // Printing: the window has already laid out the pages for print (print media CSS).

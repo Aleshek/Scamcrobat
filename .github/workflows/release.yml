@@ -1,5 +1,7 @@
 # Releasing a new version: after a tag (e.g. v0.3.0) is pushed, GitHub builds the Windows
-# installer and attaches it to a new Release. The tag must match the version in package.json.
+# installer and attaches it to a new Release, with the notes of that version from
+# CHANGELOG.md and the installer's SHA-256 checksum. The tag must match the version in
+# package.json, and CHANGELOG.md must have a section for it ("## 0.3.0 – date").
 #
 #   git tag -a v0.3.0 -m "Scamcrobat 0.3.0"
 #   git push origin v0.3.0
@@ -41,7 +43,22 @@ jobs:
             exit 1
           fi
 
+      - name: Take the release notes from CHANGELOG.md
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v v="$version" '
+            /^## / { if (on) exit; if ($0 == "## " v || index($0, "## " v " ") == 1) { on = 1; next } }
+            on { print }
+          ' CHANGELOG.md > release-notes.md
+          if ! grep -q '[^[:space:]]' release-notes.md; then
+            echo "::error::CHANGELOG.md has no section for $version"
+            exit 1
+          fi
+
       - run: npm ci
+      - run: npm test
       - run: npm run build
       - name: Build the installer
         run: npx electron-builder --win --publish never
@@ -52,9 +69,19 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" release/Scamcrobat-Setup-*.exe \
-            --title "Scamcrobat ${GITHUB_REF_NAME#v}" \
-            --generate-notes
+          version="${GITHUB_REF_NAME#v}"
+          installer="Scamcrobat-Setup-$version.exe"
+          (cd release && sha256sum "$installer" > "$installer.sha256")
+          hash=$(cut -d' ' -f1 "release/$installer.sha256")
+          {
+            echo
+            echo "**Download:** \`$installer\` below (Windows 10 and 11), or use the [web version](https://aleshek.github.io/Scamcrobat/)."
+            echo
+            echo "SHA-256 of the installer: \`$hash\` (to check it in PowerShell: \`Get-FileHash $installer\`)"
+          } >> release-notes.md
+          gh release create "$GITHUB_REF_NAME" "release/$installer" "release/$installer.sha256" \
+            --title "Scamcrobat $version" \
+            --notes-file release-notes.md
 
       - name: Test installer for download
         if: "!startsWith(github.ref, 'refs/tags/')"

@@ -1,0 +1,54 @@
+name: Bug report / Chyba
+description: Something does not work as it should / Něco nefunguje, jak má
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting it! You can write in English or Czech.
+        Děkujeme za nahlášení! Můžete psát česky nebo anglicky.
+
+        **Do not attach confidential documents.** If the problem only happens with a certain PDF,
+        attach it only if it contains nothing private. / **Nepřikládejte důvěrné dokumenty.**
+        Pokud chyba nastává jen u určitého PDF, přiložte ho, jen když v něm nic soukromého není.
+  - type: input
+    id: version
+    attributes:
+      label: Version / Verze
+      description: The version is at the bottom of the start page. / Verze je dole na úvodní stránce.
+      placeholder: "0.8.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Where / Kde
+      options:
+        - Windows app / Aplikace pro Windows
+        - Web version / Webová verze
+    validations:
+      required: true
+  - type: input
+    id: browser
+    attributes:
+      label: Browser (web version) / Prohlížeč (webová verze)
+      placeholder: "Edge 140, Firefox 145…"
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened / Co se stalo
+      description: And what you expected instead. / A co jste čekali místo toho.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce / Jak to zopakovat
+      placeholder: |
+        1. Open a PDF… / Otevřít PDF…
+        2. Click… / Kliknout na…
+  - type: textarea
+    id: more
+    attributes:
+      label: Screenshots, files / Snímky obrazovky, soubory
+      description: Drag them here. / Přetáhněte je sem.

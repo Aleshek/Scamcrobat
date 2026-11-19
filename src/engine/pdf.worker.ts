@@ -507,6 +507,110 @@ function requireRight(docId: number, right: keyof DocRights) {
   }
 }
 
+/** A character of the page text and its quad. */
+interface TextChar {
+  c: string;
+  quad: Quad;
+}
+
+const charLines = new WeakMap<mupdf.StructuredText, TextChar[][]>();
+
+/** The characters of a page, line by line. */
+function linesOf(stext: mupdf.StructuredText): TextChar[][] {
+  let lines = charLines.get(stext);
+  if (lines) return lines;
+  lines = [];
+  let line: TextChar[] | null = null;
+  stext.walk({
+    beginLine() {
+      line = [];
+      lines!.push(line);
+    },
+    onChar(c, _origin, _font, _size, quad) {
+      line?.push({ c, quad: quad as Quad });
+    },
+    endLine() {
+      line = null;
+    },
+  });
+  charLines.set(stext, lines);
+  return lines;
+}
+
+/** A point `t` of the way along a character in the reading direction (0 = its start, 1 = its end). */
+function alongChar(q: Quad, t: number): Point {
+  const left: Point = [(q[0] + q[4]) / 2, (q[1] + q[5]) / 2];
+  const right: Point = [(q[2] + q[6]) / 2, (q[3] + q[7]) / 2];
+  return [left[0] + (right[0] - left[0]) * t, left[1] + (right[1] - left[1]) * t];
+}
+
+/**
+ * The character nearest to a point on the line the point is on (or less than a line
+ * height away from it); measured along the line and across it, so it works for text
+ * in any direction.
+ */
+function charNear(lines: TextChar[][], p: Point): [number, number] | null {
+  let best: [number, number] | null = null;
+  let bestDist = Infinity;
+  lines.forEach((line, li) =>
+    line.forEach((ch, ci) => {
+      const q = ch.quad;
+      const [lx, ly] = alongChar(q, 0);
+      const [rx, ry] = alongChar(q, 1);
+      const width = Math.hypot(rx - lx, ry - ly);
+      const height = Math.hypot(q[4] - q[0], q[5] - q[1]) || 1;
+      const [ux, uy] = width ? [(rx - lx) / width, (ry - ly) / width] : [1, 0];
+      const cx = p[0] - (lx + rx) / 2;
+      const cy = p[1] - (ly + ry) / 2;
+      const along = Math.max(Math.abs(cx * ux + cy * uy) - width / 2, 0);
+      const across = Math.max(Math.abs(cy * ux - cx * uy) - height / 2, 0);
+      if (across > height) return; // not on this line
+      const dist = along + across * 2;
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = [li, ci];
+      }
+    }),
+  );
+  return best;
+}
+
+/** First and last character of the word at `i` (spaces and wide gaps end a word). */
+function wordAround(line: TextChar[], i: number): [number, number] {
+  const space = (ch: TextChar) => /\s/.test(ch.c);
+  if (space(line[i])) return [i, i];
+  const gap = (a: TextChar, b: TextChar) => {
+    const end = alongChar(a.quad, 1);
+    const start = alongChar(b.quad, 0);
+    const height = Math.hypot(a.quad[4] - a.quad[0], a.quad[5] - a.quad[1]);
+    return Math.hypot(start[0] - end[0], start[1] - end[1]) > height * 0.25;
+  };
+  let first = i;
+  let last = i;
+  while (first > 0 && !space(line[first - 1]) && !gap(line[first - 1], line[first])) first--;
+  while (last < line.length - 1 && !space(line[last + 1]) && !gap(line[last], line[last + 1])) last++;
+  return [first, last];
+}
+
+/**
+ * Selection by words (double click, then dragging): points just inside the first and
+ * the last character, from the word under `from` to the word under `to`.
+ *
+ * Not `stext.snap()`: MuPDF snaps a point on the end of the last word of a line to the
+ * first word of the next line, and where words are separated by gaps rather than space
+ * characters it takes the whole line for one word.
+ */
+function wordSelection(stext: mupdf.StructuredText, from: Point, to: Point): [Point, Point] | null {
+  const lines = linesOf(stext);
+  const a = charNear(lines, from);
+  const b = charNear(lines, to) ?? a;
+  if (!a || !b) return null;
+  const [start, end] = a[0] < b[0] || (a[0] === b[0] && a[1] <= b[1]) ? [a, b] : [b, a];
+  const first = wordAround(lines[start[0]], start[1])[0];
+  const last = wordAround(lines[end[0]], end[1])[1];
+  return [alongChar(lines[start[0]][first].quad, 0.25), alongChar(lines[end[0]][last].quad, 0.75)];
+}
+
 function getStext(docId: number, pageIndex: number): mupdf.StructuredText {
   const key = `${docId}:${pageIndex}`;
   let stext = stextCache.get(key);
@@ -1053,9 +1157,9 @@ const handlers: { [M in EngineMethod]: Handler<M> } = {
     let a: Point = from;
     let b: Point = to;
     if (mode === "words") {
-      const q = stext.snap(from, to, "words") as Quad;
-      a = [q[0], (q[1] + q[5]) / 2];
-      b = [q[6], (q[3] + q[7]) / 2];
+      const ends = wordSelection(stext, from, to);
+      if (!ends) return [{ quads: [], text: "" }];
+      [a, b] = ends;
     }
     const quads = stext.highlight(a, b, 500) as Quad[];
     const text = quads.length ? stext.copy(a, b) : "";

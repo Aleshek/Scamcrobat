@@ -4,6 +4,7 @@ import { Toolbar } from "./components/Toolbar";
 import { CSS_PX_PER_PT_AT_100 } from "./viewer/layout";
 import { dirname, isDesktop } from "./platform";
 import { forgetRecent, useRecent } from "./recent";
+import { setUpdateChecks, useUpdates } from "./updates";
 import { LANGUAGES, setLang, useLang, useT, type Lang } from "./i18n";
 
 interface Props {
@@ -27,6 +28,7 @@ export function StartView({ active, loading, sidebarOpen, onOpen, onMerge, onIma
   const t = useT();
   const lang = useLang();
   const recent = useRecent().slice(0, RECENT_SHOWN);
+  const updates = useUpdates();
   return (
     <section className={active ? "doc-view" : "doc-view inactive"} inert={!active}>
       <Toolbar
@@ -112,6 +114,18 @@ export function StartView({ active, loading, sidebarOpen, onOpen, onMerge, onIma
                 ))}
               </select>
             </label>
+            {isDesktop && (
+              <label className="checkbox update-check" title={t.app.updateCheckTitle}>
+                <input type="checkbox" checked={updates.enabled} onChange={(e) => setUpdateChecks(e.target.checked)} />
+                {t.app.updateCheck}
+              </label>
+            )}
+            <p className="app-version">
+              Scamcrobat {__APP_VERSION__} ·{" "}
+              <a href="https://github.com/Aleshek/Scamcrobat" target="_blank" rel="noreferrer">
+                GitHub
+              </a>
+            </p>
           </div>
         </div>
       </main>

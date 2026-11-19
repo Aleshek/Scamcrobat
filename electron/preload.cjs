@@ -23,4 +23,5 @@ contextBridge.exposeInMainWorld("scamcrobat", {
   getPathForFile: (file) => webUtils.getPathForFile(file),
   setLanguage: (lang) => ipcRenderer.send("app:set-language", lang),
   print: () => ipcRenderer.invoke("app:print"),
+  checkForUpdate: () => ipcRenderer.invoke("app:check-update"),
 });

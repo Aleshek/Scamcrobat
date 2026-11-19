@@ -20,6 +20,11 @@ and as a web page; both versions share the same code.
 </picture>
 
 <picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/annotate-dark.png">
+  <img alt="Comments – a highlight, an underline, a crossed-out word, a note, a drawing, text boxes and a signature" src="docs/annotate-light.png">
+</picture>
+
+<picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/organizer-dark.png">
   <img alt="Organizing pages – rotating, deleting, reordering and merging PDFs" src="docs/organizer-light.png">
 </picture>
@@ -35,7 +40,12 @@ For images (JPG, PNG, GIF, BMP, TIFF, WebP) Scamcrobat is only added to "Open wi
 a PDF of them – and never becomes their default app.
 
 The installer is not digitally signed yet, so Windows SmartScreen shows a warning the first
-time it runs ("More info → Run anyway").
+time it runs ("More info → Run anyway"). Every release lists the SHA-256 checksum of its installer;
+`Get-FileHash Scamcrobat-Setup-….exe` in PowerShell shows it for the downloaded file.
+
+Once a day the desktop app asks GitHub for the number of the latest version and shows a small
+notice when a newer one is out. Nothing about you or your documents is sent, and the check can be
+turned off on the start page. What changed in each version is in the [changelog](CHANGELOG.md).
 
 **Web:** the same app runs in the browser at <https://aleshek.github.io/Scamcrobat/>.
 Your files are never uploaded – everything is processed right in your browser.
@@ -43,7 +53,7 @@ Your files are never uploaded – everything is processed right in your browser.
 The app is available in **English** and **Czech**; it follows the system language and can be
 switched on the start page.
 
-## Features (version 0.7)
+## Features (version 0.8)
 
 - open PDFs by double click, from the dialog (Ctrl+O) or by dropping them into the window
 - **PDF from images**: JPG, PNG, GIF, BMP, TIFF (every page of it) and WebP images opened from the
@@ -113,6 +123,7 @@ switched on the start page.
   again, so nothing removed stays inside
 - opening password protected documents
 - light and dark theme following the system setting
+- a notice when a new version is out (desktop)
 
 ## Development
 
@@ -126,7 +137,24 @@ npm run app          # desktop version from a production build
 ```
 
 If Electron was not downloaded during `npm install` (npm 12 blocks install scripts),
-run `node node_modules/electron/install.js` once.
+run `node node_modules/electron/install.js` once. Development builds keep their settings and
+recent files in a `Scamcrobat Dev` folder of their own, apart from the installed app.
+
+### Tests
+
+```bash
+npm run typecheck    # TypeScript of the app and the tests
+npm test             # the PDF engine in Node.js (Vitest): saving, comments, forms, redaction,
+                     # text corrections, passwords, page tools, images, file size, word selection
+npm run test:web     # the web version in a real browser (Playwright)
+```
+
+`npm run test:web` builds the web version and needs a browser for Playwright – run
+`npx playwright install chromium` once, or use Microsoft Edge with `PLAYWRIGHT_CHANNEL=msedge`.
+GitHub runs all of them on every push and pull request (`.github/workflows/ci.yml`); a release
+is only built when the engine tests pass. The engine tests load `src/engine/pdf.worker.ts` in Node.js
+as it is (`test/engine/harness.ts` stands in for the Web Worker) and work with the PDFs in
+`test/fixtures/`.
 
 ## Building
 
@@ -139,9 +167,15 @@ npm run dist         # Windows installer into release/
 
 Installers are built by GitHub (`.github/workflows/release.yml`), not on a developer's machine:
 
-1. bump `version` in `package.json` (and run `npm install --package-lock-only`), commit
-2. `git tag -a v0.3.0 -m "Scamcrobat 0.3.0"` and `git push origin v0.3.0`
-3. GitHub builds the installer on Windows and creates a Release with generated release notes
+1. add a section for the version at the top of `CHANGELOG.md` (`## 0.9.0 – 2026-12-01`) –
+   it becomes the release notes
+2. bump `version` in `package.json` (and run `npm install --package-lock-only`), commit
+3. `git tag -a v0.9.0 -m "Scamcrobat 0.9.0"` and `git push origin v0.9.0`
+4. GitHub runs the tests, builds the installer on Windows and creates a Release with the notes
+   from the changelog, the installer and its SHA-256 checksum (`….exe.sha256`)
+
+The desktop app finds out about the new version from the latest Release (drafts and pre-releases
+are skipped).
 
 The web version is deployed to GitHub Pages automatically on every push to `main`
 (`.github/workflows/pages.yml`; the repository settings need Pages → Source: GitHub Actions).
@@ -169,8 +203,13 @@ src/
   DocView.tsx    one open document: toolbar, sidebar, viewer
   platform.ts    desktop vs. web differences (dialogs, saving files)
   recent.ts      recent files and the page each was left on
+  updates.ts     the new version notice (desktop; electron/main.js asks GitHub)
 build/           icons; installer.nsh adds Scamcrobat to "Open with" for images
-scripts/         dev server, icons, test and demo PDFs
+scripts/         dev server, icons, test and demo PDFs, README screenshots
+test/
+  engine/        tests of the PDF engine (Vitest)
+  web/           tests of the web version in a browser (Playwright)
+  fixtures/      test and demo PDFs
 ```
 
 PDFs are rendered by [MuPDF](https://mupdf.com/) from Artifex (AGPL-3.0) – the same engine
@@ -273,8 +312,14 @@ environment variable.
 
 `SCAMCROBAT_SMOKE_SHOT=shot.png` makes the app save a screenshot of the window after loading and quit.
 Optional: `SCAMCROBAT_SMOKE_SCRIPT=script.js` (run in the window first),
-`SCAMCROBAT_SMOKE_THEME=light|dark`, `SCAMCROBAT_SMOKE_PRINT=out.pdf` (printing writes a PDF
-instead of opening the print dialog). The images in `docs/` were made this way.
+`SCAMCROBAT_SMOKE_THEME=light|dark`, `SCAMCROBAT_SMOKE_SIZE=1500x900` (window size),
+`SCAMCROBAT_SMOKE_PRINT=out.pdf` (printing writes a PDF instead of opening the print dialog) and
+`SCAMCROBAT_USER_DATA=folder` (a clean profile instead of `Scamcrobat Dev`).
+
+The screenshots in `docs/` are made this way by `npm run screenshots`
+(`scripts/make-screenshots.mjs`): for each language and theme the app opens the demo documents,
+adds the comments and the signature with its own engine, sets up the scene and saves the window.
+`npm run screenshots -- annotate cs` makes only some of them.
 
 Python helper scripts (need `pip install pymupdf pillow`):
 
@@ -293,7 +338,8 @@ Done: **0.1** viewer and export to images · **0.2** organizing pages, merging, 
 **0.5** redaction, correcting text line by line, password protection and permissions ·
 **0.5.1** respecting the restrictions of secured documents · **0.6** rotating the view, two pages
 side by side, full screen, bookmarks kept when merging, cropping pages, watermarks, page numbers ·
-**0.6.1** search finds every word on pages already shown · **0.7** PDFs from images, reducing file size
+**0.6.1** search finds every word on pages already shown · **0.7** PDFs from images, reducing file size ·
+**0.8** new version notice, automated tests, release notes and checksums (details in the [changelog](CHANGELOG.md))
 
 **Later**, roughly in this order:
 
@@ -305,6 +351,11 @@ side by side, full screen, bookmarks kept when merging, cropping pages, watermar
 | Editing whole paragraphs with reflow (only if line by line corrections are not enough) | very large |
 
 **Not planned:** Word → PDF (Word does it itself), PDF → Word conversion, cloud storage and sharing.
+
+## Feedback
+
+Bugs and ideas are welcome in [Issues](https://github.com/Aleshek/Scamcrobat/issues), in English
+or Czech. Please report security problems privately – see [SECURITY.md](SECURITY.md).
 
 ## License
 

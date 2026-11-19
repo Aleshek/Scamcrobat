@@ -1,7 +1,7 @@
 {
   "name": "scamcrobat",
   "productName": "Scamcrobat",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Free and open source PDF viewer and page editor",
   "license": "AGPL-3.0-or-later",
   "author": "Scamcrobat contributors",
@@ -17,24 +17,30 @@
   "scripts": {
     "dev": "vite",
     "dev:app": "node scripts/dev.mjs",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p test",
+    "test": "vitest run",
+    "test:web": "playwright test",
+    "screenshots": "node scripts/make-screenshots.mjs",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "app": "vite build && electron .",
     "dist": "npm run build && electron-builder --win"
   },
   "devDependencies": {
+    "@playwright/test": "^1.65.1",
+    "@types/node": "^24.19.2",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.3.0",
-    "electron": "^45.3.0",
+    "electron": "^45.4.1",
     "electron-builder": "^26.18.0",
     "lucide-react": "^1.72.0",
     "mupdf": "^1.28.6",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "typescript": "^7.0.2",
-    "vite": "^8.3.8"
+    "vite": "^8.3.8",
+    "vitest": "^5.1.1"
   },
   "build": {
     "appId": "cz.scamcrobat.app",

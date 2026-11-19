@@ -1,5 +1,8 @@
 import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
+import { readFileSync } from "node:fs";
+
+const { version } = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8"));
 
 // Strict Content-Security-Policy for the production build only (the Vite dev server
 // needs inline scripts and a websocket for HMR).
@@ -31,6 +34,9 @@ export default defineConfig({
   // Relative paths, so the build works from the app:// protocol and from any subfolder of a website.
   base: "./",
   plugins: [react(), cspPlugin()],
+  define: {
+    __APP_VERSION__: JSON.stringify(version),
+  },
   build: {
     target: "esnext",
     outDir: "dist",

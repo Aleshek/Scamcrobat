@@ -1,0 +1,26 @@
+name: Idea / Nápad
+description: A feature that would help you / Funkce, která by vám pomohla
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        You can write in English or Czech. / Můžete psát česky nebo anglicky.
+  - type: textarea
+    id: need
+    attributes:
+      label: What do you need to do? / Co potřebujete udělat?
+      description: |
+        The task rather than the button – e.g. "fill in the same form every month".
+        Spíš úkol než tlačítko – např. „každý měsíc vyplňuji stejný formulář“.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: How could Scamcrobat help? / Jak by mohl Scamcrobat pomoct?
+  - type: textarea
+    id: now
+    attributes:
+      label: How do you do it now? / Jak to děláte teď?
+      description: Another app, a workaround… / Jiná aplikace, oklika…
